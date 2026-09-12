@@ -8,9 +8,11 @@ makes it impossible to leave verification off without noticing.
 from __future__ import annotations
 
 import json
+import ssl
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from pytest_httpx import HTTPXMock
 
@@ -30,6 +32,56 @@ def insecure_host(isolated_env: Path) -> Path:
 
 def _list_entities(httpx_mock: HTTPXMock) -> None:
     httpx_mock.add_response(url=f"{BASE_URL}/api/entities?page=1&limit=30", json=hal_collection(entity()))
+
+
+def _certificate_failure() -> httpx.ConnectError:
+    request = httpx.Request("GET", f"{BASE_URL}/api/entities?page=1&limit=30")
+    certificate_error = ssl.SSLCertVerificationError(
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self signed certificate"
+    )
+    transport_error = httpx.ConnectError(str(certificate_error), request=request)
+    transport_error.__cause__ = certificate_error
+    return transport_error
+
+
+def test_certificate_failure_explains_how_to_trust_the_host(
+    httpx_mock: HTTPXMock, invoke: Any, transport_settings: Any
+) -> None:
+    httpx_mock.add_exception(_certificate_failure())
+    _list_entities(httpx_mock)
+
+    result = invoke("entity", "list", "--json")
+    stderr = " ".join(result.stderr.split())
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "could not verify the TLS certificate" in stderr
+    assert HOST in stderr
+    assert "CERTIFICATE_VERIFY_FAILED" in stderr
+    assert "--insecure" in stderr
+    assert f"jsonhub config set-host {HOST} --insecure" in stderr
+    assert "could not reach the API" not in stderr
+
+    retry = invoke("--insecure", "entity", "list", "--json")
+
+    assert retry.exit_code == 0
+    assert json.loads(retry.stdout) == [entity()]
+    assert [settings["verify_ssl"] for settings in transport_settings] == [True, False]
+
+
+def test_non_tls_transport_failure_keeps_the_network_message(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    request = httpx.Request("GET", f"{BASE_URL}/api/entities?page=1&limit=30")
+    httpx_mock.add_exception(httpx.ConnectError("Connection refused", request=request))
+
+    result = invoke("entity", "list", "--json")
+    stderr = " ".join(result.stderr.split())
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "could not reach the API: Connection refused" in stderr
+    assert "check --host and your network connection" in stderr
+    assert "could not verify the TLS certificate" not in stderr
+    assert "--insecure" not in stderr
 
 
 def test_verification_is_on_by_default(httpx_mock: HTTPXMock, invoke: Any, transport_settings: Any) -> None:

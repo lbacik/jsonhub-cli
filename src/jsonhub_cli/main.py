@@ -7,6 +7,7 @@ try/except and no user ever sees a traceback for an expected failure.
 
 from __future__ import annotations
 
+import ssl
 import sys
 from collections.abc import Sequence
 from typing import Annotated
@@ -21,7 +22,7 @@ from .commands import auth, definition, entity, token
 from .commands import config as config_cmd
 from .commands import me as me_cmd
 from .commands._shared import CliState
-from .errors import JsonHubCliError, ValidationError
+from .errors import CertificateTrustError, JsonHubCliError, ValidationError
 
 app = typer.Typer(
     name="jsonhub",
@@ -39,6 +40,18 @@ app.add_typer(definition.app, name="definition")
 app.add_typer(token.app, name="token")
 app.add_typer(config_cmd.app, name="config")
 app.command("me")(me_cmd.me)
+
+
+def _is_certificate_verification_error(exc: BaseException) -> bool:
+    """Return whether an exception chain contains a TLS trust failure."""
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _version_callback(value: bool) -> None:
@@ -105,7 +118,12 @@ def run(argv: Sequence[str] | None = None) -> int:
         output.fail(f"the API returned an unexpected status {exc.status_code}")
         return 1
     except httpx.HTTPError as exc:
-        # Connection refused, DNS failure, TLS problem, timeout...
+        if _is_certificate_verification_error(exc):
+            host = exc.request.url.netloc.decode("ascii")
+            error = CertificateTrustError(host, str(exc))
+            output.fail(error.message, hint=error.hint)
+            return error.exit_code
+        # Connection refused, DNS failure, timeout...
         output.fail(f"could not reach the API: {exc}", hint="check --host and your network connection")
         return 1
     return 0

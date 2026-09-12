@@ -22,6 +22,18 @@ class ConfigError(JsonHubCliError):
     """The on-disk configuration is missing, unreadable or malformed."""
 
 
+class CertificateTrustError(JsonHubCliError):
+    """The server's TLS certificate could not be verified."""
+
+    exit_code = 1
+
+    def __init__(self, host: str, cause: str) -> None:
+        super().__init__(
+            f"could not verify the TLS certificate for {host}: {cause}",
+            hint=f"retry with --insecure or store it with 'jsonhub config set-host {host} --insecure'",
+        )
+
+
 class AuthError(JsonHubCliError):
     """No usable credentials, or the server rejected the ones we had."""
 
