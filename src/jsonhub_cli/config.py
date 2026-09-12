@@ -12,7 +12,7 @@ Layout of ``~/.config/jsonhub/config.json``::
           "refresh_token": null,
           "expires_at": 1770000000,
           "client_id": "...",
-          "scope": "mcp"
+          "scope": "jsonhub:entities:read jsonhub:entities:write jsonhub:definitions:write"
         }
       }
     }

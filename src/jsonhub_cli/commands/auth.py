@@ -30,7 +30,7 @@ def login(
     ] = False,
     scope: Annotated[
         str | None,
-        typer.Option("--scope", help="OAuth scope to request. Defaults to the server's first supported scope."),
+        typer.Option("--scope", help="OAuth scopes to request. Defaults to the capabilities used by the CLI."),
     ] = None,
     no_browser: Annotated[
         bool,
@@ -69,17 +69,15 @@ def login(
         entry = _login_with_token(anon_config)
     else:
         entry = _login_with_browser(
-            anon_config,
+            existing,
             scope=scope,
             open_browser=not no_browser,
             timeout=timeout,
         )
 
-    if not _verify(entry):
-        raise AuthError(
-            f"{host} rejected the new credentials",
-            hint="check --base-url, or that the personal access token is still valid",
-        )
+    verification_failure = _verification_failure(entry)
+    if verification_failure:
+        raise verification_failure
 
     # An explicit command-line choice is the bootstrap path for a host whose
     # certificate is not trusted yet, so retain it with the credentials.
@@ -116,14 +114,18 @@ def _login_with_browser(
     open_browser: bool,
     timeout: float,
 ) -> HostConfig:
-    # The flow must not send credentials; the caller hands us a config that
-    # carries none, so the client built from it carries none either.
+    requested_scope = scope or oauth.DEFAULT_CLI_SCOPE
+    # A registration cannot gain scopes later. Re-register when the desired
+    # capabilities differ, including migration from the old MCP default.
+    reusable_client_id = cfg.client_id if cfg.scope == requested_scope else None
+    # The flow must not send credentials. Only the prior registration metadata
+    # above is reused; the client itself is built from an anonymous config.
     tokens, resolved_client_id, _redirect_uri = oauth.login(
-        anonymous_client(cfg),
+        anonymous_client(cfg.anonymous()),
         scope=scope,
         open_browser=open_browser,
         timeout=timeout,
-        client_id=cfg.client_id,
+        client_id=reusable_client_id,
     )
     return replace(
         cfg,
@@ -235,9 +237,27 @@ def _verify(cfg: HostConfig) -> bool:
     httpx client rather than the generated endpoint: a login check must not
     fail because a deployment's quota payload does not match the schema.
     """
+    return _verification_failure(cfg) is None
+
+
+def _verification_failure(cfg: HostConfig) -> AuthError | None:
+    """Explain why ``/api/users/me`` did not accept a new credential."""
     client = build_client(cfg)
     try:
         response = client.get_httpx_client().get(WHOAMI_PATH)
     except httpx.HTTPError:
-        return False
-    return response.status_code < 400
+        return AuthError(
+            f"could not verify credentials against {cfg.base_url}",
+            hint="check --base-url and your network connection",
+        )
+    if response.status_code < 400:
+        return None
+    if cfg.token_type == "oauth":
+        return AuthError(
+            f"the JsonHub API rejected the OAuth access token (HTTP {response.status_code})",
+            hint="the authorization server may have issued it for the wrong audience or scopes",
+        )
+    return AuthError(
+        f"the JsonHub API rejected the personal access token (HTTP {response.status_code})",
+        hint="check that the personal access token is still valid",
+    )
