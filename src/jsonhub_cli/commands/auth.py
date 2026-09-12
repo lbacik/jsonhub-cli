@@ -243,14 +243,19 @@ def _verification_failure(cfg: HostConfig) -> AuthError | None:
             f"could not verify credentials against {cfg.base_url}",
             hint="check --base-url and your network connection",
         )
-    if response.status_code < 400:
+    if response.is_success:
         return None
-    if cfg.token_type == "oauth":
+    if response.status_code in {401, 403} and cfg.token_type == "oauth":
         return AuthError(
             f"the JsonHub API rejected the OAuth access token (HTTP {response.status_code})",
             hint="the authorization server may have issued it for the wrong audience or scopes",
         )
+    if response.status_code in {401, 403}:
+        return AuthError(
+            f"the JsonHub API rejected the personal access token (HTTP {response.status_code})",
+            hint="check that the personal access token is still valid",
+        )
     return AuthError(
-        f"the JsonHub API rejected the personal access token (HTTP {response.status_code})",
-        hint="check that the personal access token is still valid",
+        f"could not verify credentials against {cfg.base_url}: unexpected HTTP {response.status_code}",
+        hint="check --base-url and the server status",
     )

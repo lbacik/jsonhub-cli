@@ -55,8 +55,7 @@ METADATA = {
 @pytest.fixture
 def oauth_server(httpx_mock: HTTPXMock) -> None:
     """Mock the four endpoints a successful browser login touches."""
-    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
-    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+    _mock_oauth_discovery_and_registration(httpx_mock)
     httpx_mock.add_response(
         url=f"{BASE_URL}/oauth2/token",
         json={
@@ -67,6 +66,19 @@ def oauth_server(httpx_mock: HTTPXMock) -> None:
         },
     )
     httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
+
+
+def _mock_oauth_discovery_and_registration(httpx_mock: HTTPXMock) -> None:
+    """Mock the common bootstrap shared by browser-flow scenarios."""
+    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
+    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+
+
+def _write_host_config(config_dir: Path, **values: Any) -> None:
+    """Store one host entry for credential transition and logout scenarios."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    entry = {"base_url": BASE_URL, **values}
+    (config_dir / "config.json").write_text(json.dumps({"default_host": HOST, "hosts": {HOST: entry}}))
 
 
 def _redirect_in_background(callback_url: str) -> None:
@@ -171,8 +183,7 @@ def test_browser_login_fails_when_the_api_audience_is_not_advertised(
 def test_browser_login_is_verified_by_an_audience_aware_api(
     httpx_mock: HTTPXMock, invoke: Any, fake_browser: list[dict[str, str]], isolated_env: Path
 ) -> None:
-    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
-    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+    _mock_oauth_discovery_and_registration(httpx_mock)
 
     def issue_audience_bound_token(_request: httpx.Request) -> httpx.Response:
         audience = fake_browser[0].get("resource") if fake_browser else None
@@ -197,8 +208,7 @@ def test_browser_login_is_verified_by_an_audience_aware_api(
 def test_browser_login_rejects_a_token_missing_requested_scopes(
     httpx_mock: HTTPXMock, invoke: Any, fake_browser: list[dict[str, str]], isolated_env: Path
 ) -> None:
-    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
-    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+    _mock_oauth_discovery_and_registration(httpx_mock)
     httpx_mock.add_response(
         url=f"{BASE_URL}/oauth2/token",
         json={"access_token": "downscoped-token", "token_type": "Bearer", "scope": "jsonhub:entities:read"},
@@ -218,22 +228,12 @@ def test_browser_login_replaces_a_client_registered_for_the_old_mcp_scope(
     fake_browser: list[dict[str, str]],
     isolated_env: Path,
 ) -> None:
-    isolated_env.mkdir(parents=True, exist_ok=True)
-    (isolated_env / "config.json").write_text(
-        json.dumps(
-            {
-                "default_host": HOST,
-                "hosts": {
-                    HOST: {
-                        "base_url": BASE_URL,
-                        "token": "old-oauth-token",
-                        "token_type": "oauth",
-                        "client_id": "old-mcp-client",
-                        "scope": "mcp",
-                    }
-                },
-            }
-        )
+    _write_host_config(
+        isolated_env,
+        token="old-oauth-token",
+        token_type="oauth",
+        client_id="old-mcp-client",
+        scope="mcp",
     )
 
     result = invoke("--host", HOST, "auth", "login", "--base-url", BASE_URL)
@@ -296,23 +296,13 @@ def test_pat_login_keeps_nothing_from_an_earlier_oauth_login(
     httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
 ) -> None:
     """A stored entry must describe the token it holds, not the one before it."""
-    isolated_env.mkdir(parents=True, exist_ok=True)
-    (isolated_env / "config.json").write_text(
-        json.dumps(
-            {
-                "default_host": HOST,
-                "hosts": {
-                    HOST: {
-                        "base_url": BASE_URL,
-                        "token": "oauth-access-token",
-                        "token_type": "oauth",
-                        "expires_at": 4102444800,
-                        "client_id": "cli-client-1",
-                        "scope": "mcp",
-                    }
-                },
-            }
-        )
+    _write_host_config(
+        isolated_env,
+        token="oauth-access-token",
+        token_type="oauth",
+        expires_at=4102444800,
+        client_id="cli-client-1",
+        scope="mcp",
     )
     httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
 
@@ -340,8 +330,7 @@ def test_browser_login_explains_an_oauth_verification_failure(
     fake_browser: list[dict[str, str]],
     isolated_env: Path,
 ) -> None:
-    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
-    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+    _mock_oauth_discovery_and_registration(httpx_mock)
     httpx_mock.add_response(
         url=f"{BASE_URL}/oauth2/token",
         json={"access_token": "wrong-audience-token", "token_type": "Bearer", "expires_in": 900},
@@ -366,6 +355,24 @@ def test_login_reports_api_connection_failures_separately(httpx_mock: HTTPXMock,
     assert "could not verify credentials" in result.stderr
     assert "--base-url" in result.stderr
     assert "personal access token" not in result.stderr
+
+
+def test_login_does_not_treat_an_api_redirect_as_success(
+    httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
+) -> None:
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/api/users/me",
+        status_code=302,
+        headers={"Location": f"{BASE_URL}/login"},
+    )
+
+    result = invoke("--host", HOST, "auth", "login", "--with-token", "--base-url", BASE_URL, stdin="pat\n")
+
+    assert result.exit_code == 4
+    assert "unexpected HTTP" in result.stderr
+    assert "302" in result.stderr
+    assert "--base-url" in result.stderr
+    assert not (isolated_env / "config.json").exists()
 
 
 def test_pat_login_rejects_empty_stdin(invoke: Any) -> None:
@@ -423,23 +430,13 @@ def test_logout_removes_the_host(invoke: Any, logged_in: Path, isolated_env: Pat
 def test_logout_revokes_an_oauth_token_for_the_api_audience(
     httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
 ) -> None:
-    isolated_env.mkdir(parents=True, exist_ok=True)
-    (isolated_env / "config.json").write_text(
-        json.dumps(
-            {
-                "default_host": HOST,
-                "hosts": {
-                    HOST: {
-                        "base_url": BASE_URL,
-                        "token": "oauth-access-token",
-                        "token_type": "oauth",
-                        "client_id": "cli-client-1",
-                        "audience": "jsonhub-api",
-                        "scope": "jsonhub:entities:read jsonhub:entities:write jsonhub:definitions:write",
-                    }
-                },
-            }
-        )
+    _write_host_config(
+        isolated_env,
+        token="oauth-access-token",
+        token_type="oauth",
+        client_id="cli-client-1",
+        audience="jsonhub-api",
+        scope="jsonhub:entities:read jsonhub:entities:write jsonhub:definitions:write",
     )
     httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
     httpx_mock.add_response(url=f"{BASE_URL}/oauth2/revoke", json={})
@@ -455,22 +452,12 @@ def test_logout_revokes_an_oauth_token_for_the_api_audience(
 def test_logout_keeps_the_legacy_mcp_revocation_audience(
     httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
 ) -> None:
-    isolated_env.mkdir(parents=True, exist_ok=True)
-    (isolated_env / "config.json").write_text(
-        json.dumps(
-            {
-                "default_host": HOST,
-                "hosts": {
-                    HOST: {
-                        "base_url": BASE_URL,
-                        "token": "legacy-mcp-token",
-                        "token_type": "oauth",
-                        "client_id": "legacy-client",
-                        "scope": "mcp",
-                    }
-                },
-            }
-        )
+    _write_host_config(
+        isolated_env,
+        token="legacy-mcp-token",
+        token_type="oauth",
+        client_id="legacy-client",
+        scope="mcp",
     )
     httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
     httpx_mock.add_response(url=f"{BASE_URL}/oauth2/revoke", json={})
