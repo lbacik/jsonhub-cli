@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 from pytest_httpx import HTTPXMock
 
-from jsonhub_cli import __version__
 from jsonhub_cli.config import Config
 
 from .conftest import HOST, TOKEN, entity, hal_collection
@@ -18,7 +18,7 @@ def test_version_prints_the_package_version(invoke: Any) -> None:
     result = invoke("--version")
 
     assert result.exit_code == 0
-    assert __version__ in result.stdout
+    assert result.stdout == f"jsonhub {version('jsonhub-cli')}\n"
 
 
 def test_config_list_never_prints_a_token(invoke: Any, logged_in: Path) -> None:
