@@ -1,6 +1,6 @@
 [project]
 name = "jsonhub-cli"
-version = "0.1.1"
+version = "0.1.2"
 description = "jsonhub - the command line interface for JsonHub"
 readme = "README.md"
 authors = [
