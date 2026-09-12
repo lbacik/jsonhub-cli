@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import replace
-from typing import Annotated
+from dataclasses import dataclass, replace
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -19,6 +19,17 @@ app = typer.Typer(no_args_is_help=True, help="Authenticate jsonhub with a JsonHu
 
 TOKEN_PREVIEW_CHARS = 6
 WHOAMI_PATH = "/api/users/me"
+
+
+@dataclass(frozen=True)
+class Account:
+    """Who ``/api/users/me`` says a credential belongs to."""
+
+    id: str | None
+    email: str | None
+
+    def __str__(self) -> str:
+        return self.email or self.id or "an unnamed account"
 
 
 @app.command("login")
@@ -75,7 +86,7 @@ def login(
             timeout=timeout,
         )
 
-    verification_failure = _verification_failure(entry)
+    account, verification_failure = _verify(entry)
     if verification_failure:
         raise verification_failure
 
@@ -89,7 +100,7 @@ def login(
         cli.config.default_host = host
     cli.config.save()
 
-    output.success(f"Logged in to {host}")
+    output.success(f"Logged in to {host}" + (f" as {account}" if account else ""))
     output.note(f"Credentials stored in {cli.config.path}")
 
 
@@ -200,10 +211,13 @@ def status(ctx: typer.Context) -> None:
         if entry.is_expired:
             output.out.print("    [red]expired[/red] - run 'jsonhub auth login'")
         elif host == active:
-            if _verification_failure(entry) is None:
-                output.out.print("    [green]token accepted by the server[/green]")
-            else:
+            account, failure = _verify(entry)
+            if failure is not None:
                 output.out.print("    [yellow]token was rejected by the server[/yellow]")
+            elif account is not None:
+                output.out.print(f"    [green]logged in as {account}[/green]")
+            else:
+                output.out.print("    [green]token accepted by the server[/green]")
 
     if not any(entry.token for entry in hosts.values()):
         raise typer.Exit(1)
@@ -228,34 +242,51 @@ def _preview(token: str) -> str:
     return f"{token[:TOKEN_PREVIEW_CHARS]}..." if len(token) > TOKEN_PREVIEW_CHARS else "..."
 
 
-def _verification_failure(cfg: HostConfig) -> AuthError | None:
-    """Explain why ``/api/users/me`` did not accept a credential, if it did not.
+def _verify(cfg: HostConfig) -> tuple[Account | None, AuthError | None]:
+    """Ask ``/api/users/me`` whose credential this is, or why it was refused.
 
-    The endpoint reports quota, not identity -- JsonHub exposes no "who am I"
-    endpoint. Only its status matters, so use the raw httpx client: verification
-    must not depend on the deployment's quota payload matching the SDK schema.
+    The call goes through the raw httpx client on purpose: whether the server
+    accepts the credential must not depend on its payload matching the SDK
+    schema, so the identity is read leniently off the body and a response that
+    does not carry one still counts as accepted.
     """
     client = build_client(cfg)
     try:
         response = client.get_httpx_client().get(WHOAMI_PATH)
     except httpx.HTTPError:
-        return AuthError(
+        return None, AuthError(
             f"could not verify credentials against {cfg.base_url}",
             hint="check --base-url and your network connection",
         )
     if response.is_success:
-        return None
+        return _account(response), None
     if response.status_code in {401, 403} and cfg.token_type == "oauth":
-        return AuthError(
+        return None, AuthError(
             f"the JsonHub API rejected the OAuth access token (HTTP {response.status_code})",
             hint="the authorization server may have issued it for the wrong audience or scopes",
         )
     if response.status_code in {401, 403}:
-        return AuthError(
+        return None, AuthError(
             f"the JsonHub API rejected the personal access token (HTTP {response.status_code})",
             hint="check that the personal access token is still valid",
         )
-    return AuthError(
+    return None, AuthError(
         f"could not verify credentials against {cfg.base_url}: unexpected HTTP {response.status_code}",
         hint="check --base-url and the server status",
     )
+
+
+def _account(response: httpx.Response) -> Account | None:
+    """Read the identity out of a ``/api/users/me`` body, if it carries one."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    account = Account(id=_text(body.get("id")), email=_text(body.get("email")))
+    return account if (account.id or account.email) else None
+
+
+def _text(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None

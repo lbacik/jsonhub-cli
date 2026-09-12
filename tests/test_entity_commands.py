@@ -73,6 +73,32 @@ def test_list_passes_filters_through_as_query_params(httpx_mock: HTTPXMock, invo
     assert params["limit"] == "5"
 
 
+def test_list_asks_for_root_entities_only(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(entity()))
+
+    invoke("entity", "list", "--root")
+
+    assert httpx_mock.get_requests()[0].url.params["root"] == "true"
+
+
+def test_list_asks_for_nested_entities_only(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(entity()))
+
+    invoke("entity", "list", "--nested")
+
+    assert httpx_mock.get_requests()[0].url.params["root"] == "false"
+
+
+def test_list_leaves_root_out_when_it_was_not_asked_for(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    # An absent filter must stay absent: sending root=false would silently hide
+    # every top-level entity.
+    httpx_mock.add_response(json=hal_collection(entity()))
+
+    invoke("entity", "list")
+
+    assert "root" not in httpx_mock.get_requests()[0].url.params
+
+
 def test_get_by_slug_resolves_then_fetches(httpx_mock: HTTPXMock, invoke: Any) -> None:
     httpx_mock.add_response(json=hal_collection(entity()))
     httpx_mock.add_response(json=entity())
@@ -91,6 +117,20 @@ def test_get_by_uuid_skips_the_slug_lookup(httpx_mock: HTTPXMock, invoke: Any) -
     invoke("entity", "get", ENTITY_ID)
 
     assert len(httpx_mock.get_requests()) == 1
+
+
+def test_get_explains_a_response_the_sdk_cannot_parse(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    # The generated models d.pop() every required field, so a deployment older
+    # than the SDK this release is built against must not produce a traceback.
+    incomplete = entity()
+    del incomplete["definition"]
+    httpx_mock.add_response(json=incomplete)
+
+    result = invoke("entity", "get", ENTITY_ID)
+
+    assert result.exit_code == 1
+    assert "no 'definition'" in result.stderr
+    assert "older than this jsonhub release" in result.stderr
 
 
 def test_get_data_only_prints_just_the_document(httpx_mock: HTTPXMock, invoke: Any) -> None:
@@ -138,6 +178,16 @@ def test_create_posts_the_document_and_bearer_token(httpx_mock: HTTPXMock, invok
     assert request.method == "POST"
     assert request.headers["Authorization"] == f"Bearer {TOKEN}"
     assert json.loads(request.content)["data"] == {"name": "ada", "count": 3}
+
+
+def test_create_without_a_definition_says_so_explicitly(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
+    # definition is a required, nullable property: "validate against nothing"
+    # has to be spelled out rather than left out.
+    httpx_mock.add_response(json=entity(), status_code=201)
+
+    invoke("entity", "create", "--field", "name=ada")
+
+    assert json.loads(httpx_mock.get_requests()[0].content)["definition"] is None
 
 
 def test_create_resolves_a_definition_slug_to_an_iri(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:

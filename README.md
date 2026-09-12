@@ -45,6 +45,7 @@ anonymously.
 ```bash
 jsonhub entity list --limit 20
 jsonhub entity list --definition base-v1 --owned
+jsonhub entity list --root                  # only top-level entities
 jsonhub entity get my-slug
 jsonhub entity get my-slug --data-only > document.json
 
@@ -55,10 +56,11 @@ jsonhub entity edit my-slug                 # opens $EDITOR on the document
 jsonhub entity delete my-slug
 
 jsonhub definition list
+jsonhub definition list --root              # only top-level definitions
 jsonhub definition get base-v1 --schema-only
 jsonhub definition create --slug person-v1 --data @schema.json
 
-jsonhub me                                  # quota usage
+jsonhub me                                  # account and quota usage
 jsonhub token list
 ```
 

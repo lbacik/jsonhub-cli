@@ -79,11 +79,12 @@ Worked around here; remove the workaround if the SDK is fixed upstream
    publish a private entity on any edit. `commands/entity.py` starts from
    `private=UNSET`.
 
-3. **`/api/users/me` reports quota, not identity.** There is no "who am I"
-   endpoint, so `auth login`/`auth status` can only report whether the server
-   accepts the token. `auth._verification_failure` calls it through the raw
-   httpx client so a quota payload that does not match the schema cannot break a
-   login check.
+3. **Required response fields make a login check brittle.** `/api/users/me` is
+   the only credential check there is, and since SDK 1.0 its model requires
+   `id`, `email` and `limits`; a deployment that omits one raises `KeyError`
+   from inside `sync_detailed`. `auth._verify` calls the endpoint through the
+   raw httpx client instead: acceptance is the status code, and the account is
+   read leniently off the body, so an older or partial payload still logs in.
 
 ## Agent skills
 

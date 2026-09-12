@@ -49,6 +49,10 @@ SlugOption = Annotated[
     str | None,
     typer.Option("--slug", "-s", help="Human-readable identifier for the definition."),
 ]
+RootOption = Annotated[
+    bool | None,
+    typer.Option("--root/--nested", help="Only top-level definitions (--nested: only those under a parent entity)."),
+]
 
 
 @app.command("list")
@@ -56,6 +60,7 @@ def list_definitions(
     ctx: typer.Context,
     search: SearchOption = None,
     parent_entity: ParentEntityOption = None,
+    root: RootOption = None,
     owned: Annotated[bool, typer.Option("--owned", help="Only definitions you own.")] = False,
     limit: LimitOption = 30,
     page: PageOption = None,
@@ -73,6 +78,7 @@ def list_definitions(
                 limit=page_size,
                 qid=search if search else UNSET,
                 owned=True if owned else UNSET,
+                root=UNSET if root is None else root,
                 parent_entity=parent_id if parent_id else UNSET,
             ),
             resource="definition collection",

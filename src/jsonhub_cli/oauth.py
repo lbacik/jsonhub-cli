@@ -117,7 +117,7 @@ def fetch_metadata(client: Client) -> Metadata:
         registration_endpoint=unset_to_none(meta.registration_endpoint),
         revocation_endpoint=unset_to_none(meta.revocation_endpoint),
         scopes_supported=list(unset_to_none(meta.scopes_supported) or []),
-        audiences_supported=_string_list(meta.additional_properties.get("audiences_supported")),
+        audiences_supported=list(unset_to_none(meta.audiences_supported) or []),
     )
 
 
@@ -366,10 +366,3 @@ def _oauth_error(parsed: Any) -> str | None:
     if error and description:
         return f"{error}: {description}"
     return error or description or None
-
-
-def _string_list(value: Any) -> list[str]:
-    """Return only strings from an OAuth metadata array."""
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str)]

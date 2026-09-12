@@ -127,12 +127,14 @@ def entity(
     definition_slug: str = "base-v1",
     private: bool = False,
 ) -> dict[str, Any]:
+    related_definition = {"id": "d0000000-0000-0000-0000-000000000001", "slug": definition_slug}
     return {
         "_links": {"self": {"href": f"/api/entities/{entity_id}"}},
-        "_embedded": {"definition": {"id": "d0000000-0000-0000-0000-000000000001", "slug": definition_slug}},
+        "_embedded": {"definition": dict(related_definition)},
         "id": entity_id,
         "slug": slug,
         "data": data if data is not None else {"name": "foo"},
+        "definition": related_definition,
         "private": private,
         "isOwnedByCurrentUser": True,
     }
@@ -152,12 +154,18 @@ def definition(
     }
 
 
+USER_ID = "0193d9a1-4c2f-7b6e-8f10-2a5c9d3e7b41"
+USER_EMAIL = "ada@example.test"
+
+
 def quota(entities: int = 3, private: int = 0, definitions: int = 1) -> dict[str, Any]:
-    """A ``/api/users/me`` body with every limit the schema requires."""
+    """A ``/api/users/me`` body with everything the schema requires."""
     return {
+        "id": USER_ID,
+        "email": USER_EMAIL,
         "limits": {
             "entities": {"used": entities, "limit": 100},
             "privateEntities": {"used": private, "limit": 10},
             "definitions": {"used": definitions, "limit": 20},
-        }
+        },
     }

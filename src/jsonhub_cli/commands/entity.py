@@ -52,6 +52,10 @@ SlugOption = Annotated[
     str | None,
     typer.Option("--slug", "-s", help="Human-readable identifier for the entity."),
 ]
+RootOption = Annotated[
+    bool | None,
+    typer.Option("--root/--nested", help="Only top-level entities (--nested: only entities with a parent)."),
+]
 
 
 @app.command("list")
@@ -60,6 +64,7 @@ def list_entities(
     search: SearchOption = None,
     definition: DefinitionOption = None,
     parent: ParentOption = None,
+    root: RootOption = None,
     owned: Annotated[bool, typer.Option("--owned", help="Only entities you own.")] = False,
     private: Annotated[bool, typer.Option("--private", help="Only your private entities.")] = False,
     limit: LimitOption = 30,
@@ -80,6 +85,7 @@ def list_entities(
                 qid=search if search else UNSET,
                 owned=True if owned else UNSET,
                 private=True if private else UNSET,
+                root=UNSET if root is None else root,
                 definition=definition_id if definition_id else UNSET,
                 parent=parent_id if parent_id else UNSET,
             ),
@@ -169,11 +175,16 @@ def create_entity(
     sess = session(ctx)
     document = jsonarg.require_json(data, field, what="entity data")
 
-    body = EntityEntityCreate(data=EntityEntityCreateData.from_dict(document), private=private)
+    # definition is required by the generated model -- it serialises as an
+    # explicit null, which is how the API reads "no definition to validate
+    # against" -- so it has to be resolved before the body is built.
+    body = EntityEntityCreate(
+        definition=refs.definition_iri(sess, definition) if definition else None,
+        data=EntityEntityCreateData.from_dict(document),
+        private=private,
+    )
     if slug:
         body.slug = slug
-    if definition:
-        body.definition = refs.definition_iri(sess, definition)
     if parent:
         body.parent = refs.entity_iri(sess, parent)
 
