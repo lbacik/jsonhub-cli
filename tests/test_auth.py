@@ -92,15 +92,17 @@ def fake_browser(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
 
 
 def test_browser_login_stores_the_access_token(
-    invoke: Any, oauth_server: None, fake_browser: list[dict[str, str]], isolated_env: Path
+    invoke: Any, oauth_server: None, fake_browser: list[dict[str, str]], isolated_env: Path, transport_settings: Any
 ) -> None:
-    result = invoke("--host", HOST, "auth", "login", "--base-url", BASE_URL)
+    result = invoke("--host", HOST, "--insecure", "auth", "login", "--base-url", BASE_URL)
 
     assert result.exit_code == 0, result.stderr
     stored = json.loads((isolated_env / "config.json").read_text())["hosts"][HOST]
     assert stored["token"] == "oauth-access-token"
     assert stored["token_type"] == "oauth"
     assert stored["client_id"] == "cli-client-1"
+    assert stored["insecure"] is True
+    assert transport_settings and all(settings["verify_ssl"] is False for settings in transport_settings)
 
 
 def test_browser_login_uses_pkce_with_s256(invoke: Any, oauth_server: None, fake_browser: list[dict[str, str]]) -> None:
