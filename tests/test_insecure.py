@@ -134,17 +134,22 @@ def test_a_stored_insecure_host_warns_without_the_flag(httpx_mock: HTTPXMock, in
     assert "verification is disabled" in result.stderr
 
 
-def test_login_honours_the_flag_without_storing_it(
+def test_login_stores_the_flag_and_status_uses_it_afterwards(
     httpx_mock: HTTPXMock, invoke: Any, transport_settings: Any, isolated_env: Path
 ) -> None:
+    httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
     httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
 
     result = invoke("--insecure", "auth", "login", "--with-token", "--base-url", BASE_URL, stdin="pat-secret\n")
 
     assert result.exit_code == 0, result.stderr
+    assert json.loads((isolated_env / "config.json").read_text())["hosts"][HOST]["insecure"] is True
+
+    result = invoke("auth", "status")
+
+    assert result.exit_code == 0, result.stderr
+    assert "token accepted" in result.stdout
     assert transport_settings and all(settings["verify_ssl"] is False for settings in transport_settings)
-    # A per-run override is not a decision about the host.
-    assert "insecure" not in json.loads((isolated_env / "config.json").read_text())["hosts"][HOST]
 
 
 def test_login_uses_and_keeps_a_stored_setting(

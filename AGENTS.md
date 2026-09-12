@@ -14,6 +14,11 @@ uv run ruff format .
 uv run mypy            # strict, and expected to stay clean
 ```
 
+## Git workflow
+
+Start every task on a dedicated feature branch. Finish every task by pushing
+that branch and opening a pull request.
+
 ## Layout
 
 Source is `src/jsonhub_cli/`, one module per concern:

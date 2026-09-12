@@ -81,9 +81,12 @@ def login(
             hint="check --base-url, or that the personal access token is still valid",
         )
 
-    # Command and environment overrides only apply to this run.  A login may
-    # refresh credentials, but it must not quietly change TLS policy on disk.
-    cli.config.set_host_config(host, replace(entry, insecure=stored.insecure))
+    # An explicit command-line choice is the bootstrap path for a host whose
+    # certificate is not trusted yet, so retain it with the credentials.
+    # Environment overrides stay transient and must not quietly alter the
+    # host's TLS policy on disk.
+    persisted_insecure = cli.insecure if cli.insecure is not None else stored.insecure
+    cli.config.set_host_config(host, replace(entry, insecure=persisted_insecure))
     if not cli.config.hosts.get(cli.config.default_host):
         cli.config.default_host = host
     cli.config.save()
