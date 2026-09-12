@@ -17,7 +17,8 @@ from typing import Any
 
 import pytest
 
-from jsonhub_cli.config import ENV_CONFIG_DIR, ENV_HOST, ENV_TOKEN
+from jsonhub_cli import api
+from jsonhub_cli.config import ENV_CONFIG_DIR, ENV_HOST, ENV_INSECURE, ENV_TOKEN, HostConfig
 from jsonhub_cli.main import run
 
 BASE_URL = "https://api.test.example"
@@ -31,6 +32,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pa
     config_dir = tmp_path / "config"
     monkeypatch.setenv(ENV_CONFIG_DIR, str(config_dir))
     monkeypatch.delenv(ENV_TOKEN, raising=False)
+    monkeypatch.delenv(ENV_INSECURE, raising=False)
     monkeypatch.setenv(ENV_HOST, HOST)
     yield config_dir
 
@@ -49,6 +51,26 @@ def logged_in(isolated_env: Path) -> Path:
         )
     )
     return path
+
+
+@pytest.fixture
+def transport_settings(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record the settings every SDK client in a run is built from.
+
+    ``api._client_kwargs`` is the one place a per-host transport setting is
+    honoured, and a mocked transport cannot show whether TLS verification was
+    on, so this is where the tests look instead.
+    """
+    original = api._client_kwargs
+    seen: list[dict[str, Any]] = []
+
+    def spy(cfg: HostConfig, timeout: float) -> dict[str, Any]:
+        kwargs = original(cfg, timeout)
+        seen.append(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(api, "_client_kwargs", spy)
+    return seen
 
 
 @dataclass(frozen=True)

@@ -66,13 +66,14 @@ class CliState:
     """Root-level state that subcommands read out of the Typer context."""
 
     host: str | None = None
+    insecure: bool | None = None
     config: Config = field(default_factory=Config.load)
     _session: Session | None = None
 
     @property
     def session(self) -> Session:
         if self._session is None:
-            self._session = Session(self.config, self.host)
+            self._session = Session(self.config, self.host, insecure=self.insecure)
         return self._session
 
 

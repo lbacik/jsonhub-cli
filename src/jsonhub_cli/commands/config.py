@@ -19,7 +19,12 @@ def list_config(ctx: typer.Context, as_json: JsonFlag = False) -> None:
     """Show the current configuration. Tokens are never printed."""
     cli = state(ctx)
     hosts = {
-        host: {"base_url": entry.base_url, "logged_in": bool(entry.token), "scope": entry.scope}
+        host: {
+            "base_url": entry.base_url,
+            "insecure": entry.insecure,
+            "logged_in": bool(entry.token),
+            "scope": entry.scope,
+        }
         for host, entry in sorted(cli.config.hosts.items())
     }
     document = {"path": str(cli.config.path), "default_host": cli.config.default_host, "hosts": hosts}
@@ -32,8 +37,11 @@ def list_config(ctx: typer.Context, as_json: JsonFlag = False) -> None:
     if hosts:
         output.err.print()
         output.print_table(
-            ["HOST", "BASE URL", "LOGGED IN", "SCOPE"],
-            ([host, values["base_url"], values["logged_in"], values["scope"]] for host, values in hosts.items()),
+            ["HOST", "BASE URL", "INSECURE", "LOGGED IN", "SCOPE"],
+            (
+                [host, values["base_url"], values["insecure"], values["logged_in"], values["scope"]]
+                for host, values in hosts.items()
+            ),
         )
 
 
@@ -49,6 +57,10 @@ def set_host(
         bool,
         typer.Option("--default", help="Also make this the default host."),
     ] = False,
+    insecure: Annotated[
+        bool | None,
+        typer.Option("--insecure/--no-insecure", help="Store whether this host skips TLS certificate verification."),
+    ] = None,
 ) -> None:
     """Register a host, or change its base URL.
 
@@ -64,6 +76,8 @@ def set_host(
         entry = HostConfig(base_url=resolved)
     else:
         entry.base_url = resolved
+    if insecure is not None:
+        entry.insecure = insecure
     cli.config.set_host_config(key, entry)
 
     if make_default or not cli.config.hosts.get(cli.config.default_host):

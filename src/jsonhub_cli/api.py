@@ -58,6 +58,7 @@ def _client_kwargs(cfg: HostConfig, timeout: float) -> dict[str, Any]:
     return {
         "base_url": cfg.base_url.rstrip("/"),
         "timeout": httpx.Timeout(timeout),
+        "verify_ssl": not cfg.insecure,
         "raise_on_unexpected_status": False,
         "headers": {"Accept": HAL_MEDIA_TYPE},
     }
@@ -92,10 +93,12 @@ class Session:
     the Typer context, so ``--host`` is honoured uniformly.
     """
 
-    def __init__(self, config: Config, host: str | None = None, *, timeout: float = DEFAULT_TIMEOUT) -> None:
+    def __init__(
+        self, config: Config, host: str | None = None, *, insecure: bool | None = None, timeout: float = DEFAULT_TIMEOUT
+    ) -> None:
         self.config = config
         self.host = config.resolve_host(host)
-        self.host_config = config.host_config(host)
+        self.host_config = config.host_config(host, insecure=insecure)
         self._timeout = timeout
         self._client: Client | AuthenticatedClient | None = None
 

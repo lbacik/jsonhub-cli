@@ -58,13 +58,21 @@ def root(
             metavar="HOST",
         ),
     ] = None,
+    insecure: Annotated[
+        bool,
+        typer.Option("--insecure", help="Disable TLS certificate verification for this command."),
+    ] = False,
     _version: Annotated[
         bool,
         typer.Option("--version", "-v", callback=_version_callback, is_eager=True, help="Print the version and exit."),
     ] = False,
 ) -> None:
     """Set up state every subcommand shares."""
-    ctx.obj = CliState(host=host)
+    cli = CliState(host=host, insecure=True if insecure else None)
+    effective = cli.config.host_config(host, insecure=cli.insecure)
+    if effective.insecure:
+        output.warn(f"TLS certificate verification is disabled for {cli.config.resolve_host(host)}")
+    ctx.obj = cli
 
 
 def run(argv: Sequence[str] | None = None) -> int:

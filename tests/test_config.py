@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jsonhub_cli.config import ENV_HOST, ENV_TOKEN, Config, HostConfig, normalize_host
+from jsonhub_cli.config import ENV_HOST, ENV_INSECURE, ENV_TOKEN, Config, HostConfig, normalize_host
 from jsonhub_cli.errors import ConfigError
 
 
@@ -64,6 +64,17 @@ def test_env_token_overrides_stored_credentials(tmp_path: Path, monkeypatch: pyt
     assert config.host_config("api.test.example").token == "from-env"
 
 
+def test_env_token_does_not_inherit_an_expired_oauth_deadline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config.load(tmp_path / "config.json")
+    config.set_host_config(
+        "api.test.example",
+        HostConfig(base_url="https://api.test.example", token="old", token_type="oauth", expires_at=1),
+    )
+    monkeypatch.setenv(ENV_TOKEN, "from-env")
+
+    assert not config.host_config("api.test.example").is_expired
+
+
 def test_env_token_is_not_written_back_to_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = Config.load(tmp_path / "config.json")
     config.set_host_config("api.test.example", HostConfig(base_url="https://api.test.example", token="on-disk"))
@@ -115,6 +126,55 @@ def test_anonymous_drops_credentials_but_keeps_the_endpoint() -> None:
     # client_id is a public identifier, not a credential: the flow reuses it.
     assert anon.client_id == "cli"
     assert entry.token == "secret", "the original entry must not be mutated"
+
+
+def test_anonymous_keeps_the_transport_settings() -> None:
+    entry = HostConfig(base_url="https://api.test.example", token="secret", insecure=True)
+
+    # The OAuth flow has to reach the same endpoint on the same terms.
+    assert entry.anonymous().insecure is True
+
+
+def test_a_default_setting_is_not_written_to_disk() -> None:
+    assert HostConfig(base_url="https://api.test.example").to_dict() == {"base_url": "https://api.test.example"}
+
+
+def test_a_non_boolean_insecure_in_the_file_does_not_disable_verification() -> None:
+    # Only a literal JSON true may turn verification off; "false" is a string.
+    assert HostConfig.from_dict("h", {"base_url": "https://h", "insecure": "false"}).insecure is False
+
+
+def test_env_insecure_overrides_the_stored_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config.load(tmp_path / "config.json")
+    config.set_host_config("api.test.example", HostConfig(base_url="https://api.test.example", insecure=True))
+
+    monkeypatch.setenv(ENV_INSECURE, "no")
+    assert config.host_config("api.test.example").insecure is False
+
+
+def test_env_insecure_is_not_written_back_to_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config.load(tmp_path / "config.json")
+    config.set_host_config("api.test.example", HostConfig(base_url="https://api.test.example"))
+    monkeypatch.setenv(ENV_INSECURE, "yes")
+
+    config.save()
+
+    assert "insecure" not in json.loads(config.path.read_text())["hosts"]["api.test.example"]
+
+
+def test_env_insecure_rejects_a_value_that_is_not_a_boolean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config.load(tmp_path / "config.json")
+    monkeypatch.setenv(ENV_INSECURE, "sometimes")
+
+    with pytest.raises(ConfigError):
+        config.host_config("api.test.example")
+
+
+def test_the_insecure_argument_beats_both(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config.load(tmp_path / "config.json")
+    monkeypatch.setenv(ENV_INSECURE, "off")
+
+    assert config.host_config("api.test.example", insecure=True).insecure is True
 
 
 def test_oauth_expiry_uses_a_safety_margin() -> None:
