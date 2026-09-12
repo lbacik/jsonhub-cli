@@ -35,6 +35,7 @@ def test_config_list_json_reports_login_state_only(invoke: Any, logged_in: Path)
     document = json.loads(result.stdout)
     assert document["hosts"][HOST] == {
         "base_url": "https://api.test.example",
+        "insecure": False,
         "logged_in": True,
         "scope": None,
     }

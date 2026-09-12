@@ -19,6 +19,9 @@ Layout of ``~/.config/jsonhub/config.json``::
 
 The file holds bearer tokens, so it is written ``0600`` inside a ``0700``
 directory and replaced atomically.
+
+Optional host settings are omitted when they use their safe defaults; for
+example, ``insecure`` appears only when certificate verification is disabled.
 """
 
 from __future__ import annotations
@@ -37,12 +40,26 @@ DEFAULT_HOST = "api.jsonhub.cloud"
 DEFAULT_BASE_URL = f"https://{DEFAULT_HOST}"
 
 ENV_HOST = "JSONHUB_HOST"
+ENV_INSECURE = "JSONHUB_INSECURE"
 ENV_TOKEN = "JSONHUB_TOKEN"
 ENV_CONFIG_DIR = "JSONHUB_CONFIG_DIR"
 
 # Refresh/re-login slightly before the real deadline so a long-running command
 # does not die halfway through with a 401.
 EXPIRY_SKEW_SECONDS = 60
+
+
+def _bool_env(name: str) -> bool | None:
+    """Read an optional boolean environment variable without guessing."""
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be a boolean (true/false, yes/no, on/off, or 1/0)")
 
 
 def config_dir() -> Path:
@@ -84,6 +101,7 @@ class HostConfig:
     """Credentials and endpoint settings for a single JsonHub deployment."""
 
     base_url: str
+    insecure: bool = False
     token: str | None = None
     token_type: str | None = None  # "oauth" | "pat"
     refresh_token: str | None = None
@@ -120,10 +138,12 @@ class HostConfig:
         known = {f for f in cls.__dataclass_fields__}
         data = {k: v for k, v in raw.items() if k in known}
         data.setdefault("base_url", base_url_for(host))
+        # Never let a malformed config entry silently turn TLS verification off.
+        data["insecure"] = raw.get("insecure") is True
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
-        return {k: v for k, v in asdict(self).items() if v is not None}
+        return {k: v for k, v in asdict(self).items() if v is not None and (k != "insecure" or v)}
 
 
 @dataclass
@@ -186,23 +206,28 @@ class Config:
         candidate = host or os.environ.get(ENV_HOST) or self.default_host
         return normalize_host(candidate)
 
-    def host_config(self, host: str | None = None) -> HostConfig:
-        """Return the config for a host, with ``$JSONHUB_TOKEN`` layered on top.
+    def host_config(self, host: str | None = None, *, insecure: bool | None = None) -> HostConfig:
+        """Return the config for a host with per-run environment overrides.
 
         Always returns an object -- an unknown host yields an unauthenticated
         entry so read-only commands still work against public data.
         """
         key = self.resolve_host(host)
         cfg = self.hosts.get(key) or HostConfig(base_url=base_url_for(key))
+        env_insecure = _bool_env(ENV_INSECURE)
+        effective_insecure = insecure if insecure is not None else env_insecure
+        if effective_insecure is not None:
+            cfg = replace(cfg, insecure=effective_insecure)
+
         env_token = os.environ.get(ENV_TOKEN)
         if env_token:
             # Environment wins, and is deliberately not persisted.
             cfg = HostConfig(
                 base_url=cfg.base_url,
+                insecure=cfg.insecure,
                 token=env_token,
                 token_type="pat",
                 client_id=cfg.client_id,
-                scope=cfg.scope,
             )
         return cfg
 

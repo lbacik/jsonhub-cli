@@ -55,7 +55,8 @@ def login(
     """
     cli = state(ctx)
     host = cli.config.resolve_host(cli.host)
-    existing = cli.config.hosts.get(host) or HostConfig(base_url=base_url_for(host))
+    stored = cli.config.hosts.get(host) or HostConfig(base_url=base_url_for(host))
+    existing = cli.config.host_config(cli.host, insecure=cli.insecure)
     if base_url:
         existing = replace(existing, base_url=base_url)
 
@@ -80,7 +81,9 @@ def login(
             hint="check --base-url, or that the personal access token is still valid",
         )
 
-    cli.config.set_host_config(host, entry)
+    # Command and environment overrides only apply to this run.  A login may
+    # refresh credentials, but it must not quietly change TLS policy on disk.
+    cli.config.set_host_config(host, replace(entry, insecure=stored.insecure))
     if not cli.config.hosts.get(cli.config.default_host):
         cli.config.default_host = host
     cli.config.save()
@@ -139,6 +142,13 @@ def logout(ctx: typer.Context, yes: YesFlag = False) -> None:
         output.note(f"Not logged in to {host}; nothing to do")
         return
 
+    # Revocation must target the stored credential, while still honouring the
+    # command's effective transport settings.  Environment credentials are
+    # transient and must never be revoked or written by logout.
+    transport = cli.config.host_config(cli.host, insecure=cli.insecure)
+    entry = replace(entry, insecure=transport.insecure)
+    assert entry.token is not None
+
     confirm(f"Log out of {host}?", assume_yes=yes)
 
     if entry.token_type == "oauth" and entry.client_id:
@@ -169,6 +179,8 @@ def status(ctx: typer.Context) -> None:
         hosts[active] = cli.config.host_config(cli.host)
 
     for host, entry in sorted(hosts.items()):
+        if host == active:
+            entry = cli.config.host_config(cli.host, insecure=cli.insecure)
         marker = "*" if host == active else " "
         output.out.print(f"{marker} [bold]{host}[/bold]  [dim]{entry.base_url}[/dim]")
         if not entry.token:
