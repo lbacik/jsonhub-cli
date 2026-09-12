@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -101,6 +101,19 @@ class HostConfig:
         if self.expires_at is None:
             return False
         return time.time() >= self.expires_at - EXPIRY_SKEW_SECONDS
+
+    def anonymous(self) -> HostConfig:
+        """A copy with the credentials dropped, endpoint settings kept.
+
+        Lets a tokenless client still be built from a host config, so the OAuth
+        flow reaches the same endpoint -- on the same terms -- as every other
+        call, without any stale credentials riding along. Everything that
+        describes the old token goes, ``scope`` included: a scope outlives its
+        token only to be reported for a token that was never granted it.
+        ``client_id`` stays, being a public identifier for this CLI rather than
+        a credential, and the flow reuses it across logins.
+        """
+        return replace(self, token=None, token_type=None, refresh_token=None, expires_at=None, scope=None)
 
     @classmethod
     def from_dict(cls, host: str, raw: dict[str, Any]) -> HostConfig:
