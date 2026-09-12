@@ -182,6 +182,37 @@ def test_pat_login_reads_stdin_and_verifies_it(httpx_mock: HTTPXMock, invoke: An
     assert (stored["token"], stored["token_type"]) == ("pat-secret", "pat")
 
 
+def test_pat_login_keeps_nothing_from_an_earlier_oauth_login(
+    httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
+) -> None:
+    """A stored entry must describe the token it holds, not the one before it."""
+    isolated_env.mkdir(parents=True, exist_ok=True)
+    (isolated_env / "config.json").write_text(
+        json.dumps(
+            {
+                "default_host": HOST,
+                "hosts": {
+                    HOST: {
+                        "base_url": BASE_URL,
+                        "token": "oauth-access-token",
+                        "token_type": "oauth",
+                        "expires_at": 4102444800,
+                        "client_id": "cli-client-1",
+                        "scope": "mcp",
+                    }
+                },
+            }
+        )
+    )
+    httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
+
+    result = invoke("--host", HOST, "auth", "login", "--with-token", "--base-url", BASE_URL, stdin="pat-secret\n")
+
+    assert result.exit_code == 0, result.stderr
+    stored = json.loads((isolated_env / "config.json").read_text())["hosts"][HOST]
+    assert stored == {"base_url": BASE_URL, "token": "pat-secret", "token_type": "pat"}
+
+
 def test_pat_login_rejects_a_token_the_server_refuses(httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path) -> None:
     httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", status_code=401, json={"detail": "nope"})
 

@@ -49,21 +49,28 @@ def unset_to_none(value: T | Unset) -> T | None:
     return None if isinstance(value, Unset) else value
 
 
-def _client_kwargs(base_url: str, timeout: float) -> dict[str, Any]:
+def _client_kwargs(cfg: HostConfig, timeout: float) -> dict[str, Any]:
+    """The transport settings every client shares, read off one host config.
+
+    This is the single place a per-host transport setting has to be honoured:
+    no code path builds a client from a bare base URL.
+    """
     return {
-        "base_url": base_url.rstrip("/"),
+        "base_url": cfg.base_url.rstrip("/"),
         "timeout": httpx.Timeout(timeout),
         "raise_on_unexpected_status": False,
         "headers": {"Accept": HAL_MEDIA_TYPE},
     }
 
 
-def anonymous_client(base_url: str, *, timeout: float = DEFAULT_TIMEOUT) -> Client:
-    """A client that carries no credentials.
+def anonymous_client(cfg: HostConfig, *, timeout: float = DEFAULT_TIMEOUT) -> Client:
+    """A client that carries no credentials, but keeps the host's transport settings.
 
-    Used for the OAuth flow, where sending a stale token would be wrong.
+    Used for the OAuth flow, where sending a stale token would be wrong: any
+    token on ``cfg`` is ignored by construction, so the caller need not scrub
+    one first.
     """
-    return Client(**_client_kwargs(base_url, timeout))
+    return Client(**_client_kwargs(cfg, timeout))
 
 
 def build_client(cfg: HostConfig, *, timeout: float = DEFAULT_TIMEOUT) -> Client | AuthenticatedClient:
@@ -72,7 +79,7 @@ def build_client(cfg: HostConfig, *, timeout: float = DEFAULT_TIMEOUT) -> Client
     Anonymous is a legitimate mode: public entities and definitions are
     readable without credentials, so ``jsonhub entity list`` works before login.
     """
-    kwargs = _client_kwargs(cfg.base_url, timeout)
+    kwargs = _client_kwargs(cfg, timeout)
     if cfg.token:
         return AuthenticatedClient(token=cfg.token, **kwargs)
     return Client(**kwargs)

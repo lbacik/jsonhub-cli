@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from typing import Annotated
 
 import httpx
 import typer
-from jsonhub_sdk import Client
 
 from .. import oauth, output
 from ..api import anonymous_client, build_client
@@ -55,26 +55,26 @@ def login(
     """
     cli = state(ctx)
     host = cli.config.resolve_host(cli.host)
-    existing = cli.config.hosts.get(host)
-    resolved_base_url = base_url or (existing.base_url if existing else base_url_for(host))
+    existing = cli.config.hosts.get(host) or HostConfig(base_url=base_url_for(host))
+    if base_url:
+        existing = replace(existing, base_url=base_url)
 
-    # Log in against a clean, tokenless client: any stale credentials on file
-    # must not influence (or be sent during) the flow.
-    anon = anonymous_client(resolved_base_url)
+    # Log in from a clean, tokenless config: any stale credentials on file must
+    # not influence (or be sent during) the flow, while the host's own endpoint
+    # settings still apply.
+    anon_config = existing.anonymous()
 
     if with_token:
-        entry = _login_with_token(anon, resolved_base_url)
+        entry = _login_with_token(anon_config)
     else:
         entry = _login_with_browser(
-            anon,
-            resolved_base_url,
+            anon_config,
             scope=scope,
             open_browser=not no_browser,
             timeout=timeout,
-            client_id=existing.client_id if existing else None,
         )
 
-    if not _verify(resolved_base_url, entry.token or ""):
+    if not _verify(entry):
         raise AuthError(
             f"{host} rejected the new credentials",
             hint="check --base-url, or that the personal access token is still valid",
@@ -89,7 +89,7 @@ def login(
     output.note(f"Credentials stored in {cli.config.path}")
 
 
-def _login_with_token(anon: Client, base_url: str) -> HostConfig:
+def _login_with_token(cfg: HostConfig) -> HostConfig:
     if sys.stdin.isatty():
         raise AuthError(
             "--with-token expects the token on stdin",
@@ -98,27 +98,29 @@ def _login_with_token(anon: Client, base_url: str) -> HostConfig:
     token = sys.stdin.read().strip()
     if not token:
         raise AuthError("no token was read from stdin")
-    return HostConfig(base_url=base_url, token=token, token_type="pat")
+    # A personal access token has no OAuth registration behind it, so a
+    # client_id left over from an earlier browser login is not this token's.
+    return replace(cfg, token=token, token_type="pat", client_id=None)
 
 
 def _login_with_browser(
-    anon: Client,
-    base_url: str,
+    cfg: HostConfig,
     *,
     scope: str | None,
     open_browser: bool,
     timeout: float,
-    client_id: str | None,
 ) -> HostConfig:
+    # The flow must not send credentials; the caller hands us a config that
+    # carries none, so the client built from it carries none either.
     tokens, resolved_client_id, _redirect_uri = oauth.login(
-        anon,
+        anonymous_client(cfg),
         scope=scope,
         open_browser=open_browser,
         timeout=timeout,
-        client_id=client_id,
+        client_id=cfg.client_id,
     )
-    return HostConfig(
-        base_url=base_url,
+    return replace(
+        cfg,
         token=tokens.access_token,
         token_type="oauth",
         expires_at=tokens.expires_at,
@@ -140,7 +142,7 @@ def logout(ctx: typer.Context, yes: YesFlag = False) -> None:
     confirm(f"Log out of {host}?", assume_yes=yes)
 
     if entry.token_type == "oauth" and entry.client_id:
-        anon = anonymous_client(entry.base_url)
+        anon = anonymous_client(entry)
         try:
             meta = oauth.fetch_metadata(anon)
         except AuthError:
@@ -179,7 +181,7 @@ def status(ctx: typer.Context) -> None:
         if entry.is_expired:
             output.out.print("    [red]expired[/red] - run 'jsonhub auth login'")
         elif host == active:
-            if _verify(entry.base_url, entry.token):
+            if _verify(entry):
                 output.out.print("    [green]token accepted by the server[/green]")
             else:
                 output.out.print("    [yellow]token was rejected by the server[/yellow]")
@@ -207,8 +209,8 @@ def _preview(token: str) -> str:
     return f"{token[:TOKEN_PREVIEW_CHARS]}..." if len(token) > TOKEN_PREVIEW_CHARS else "..."
 
 
-def _verify(base_url: str, token: str) -> bool:
-    """Check a token by calling ``/api/users/me``.
+def _verify(cfg: HostConfig) -> bool:
+    """Check a host config's token by calling ``/api/users/me``.
 
     The endpoint reports quota, not identity -- JsonHub exposes no "who am I"
     for the current user -- so this is purely "does the server accept this
@@ -218,7 +220,7 @@ def _verify(base_url: str, token: str) -> bool:
     httpx client rather than the generated endpoint: a login check must not
     fail because a deployment's quota payload does not match the schema.
     """
-    client = build_client(HostConfig(base_url=base_url, token=token))
+    client = build_client(cfg)
     try:
         response = client.get_httpx_client().get(WHOAMI_PATH)
     except httpx.HTTPError:

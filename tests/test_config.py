@@ -97,6 +97,26 @@ def test_localhost_defaults_to_plain_http(tmp_path: Path) -> None:
     assert config.host_config("localhost:8000").base_url == "http://localhost:8000"
 
 
+def test_anonymous_drops_credentials_but_keeps_the_endpoint() -> None:
+    entry = HostConfig(
+        base_url="https://api.test.example",
+        token="secret",
+        token_type="oauth",
+        refresh_token="refresh",
+        expires_at=1770000000,
+        client_id="cli",
+        scope="mcp",
+    )
+
+    anon = entry.anonymous()
+
+    assert (anon.token, anon.token_type, anon.refresh_token, anon.expires_at, anon.scope) == (None,) * 5
+    assert anon.base_url == entry.base_url
+    # client_id is a public identifier, not a credential: the flow reuses it.
+    assert anon.client_id == "cli"
+    assert entry.token == "secret", "the original entry must not be mutated"
+
+
 def test_oauth_expiry_uses_a_safety_margin() -> None:
     import time
 
