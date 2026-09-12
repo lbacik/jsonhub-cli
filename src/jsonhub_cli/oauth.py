@@ -46,6 +46,14 @@ from .errors import AuthError
 from .output import note
 
 CLIENT_NAME = "jsonhub CLI"
+API_AUDIENCE = "jsonhub-api"
+LEGACY_DEFAULT_AUDIENCE = "mcp"
+CLI_SCOPES = (
+    "jsonhub:entities:read",
+    "jsonhub:entities:write",
+    "jsonhub:definitions:write",
+)
+DEFAULT_CLI_SCOPE = " ".join(CLI_SCOPES)
 #: Tried first so a repeat login can reuse a stored client registration.
 PREFERRED_PORT = 8976
 CALLBACK_PATH = "/callback"
@@ -77,10 +85,7 @@ class Metadata:
     registration_endpoint: str | None
     revocation_endpoint: str | None
     scopes_supported: list[str]
-
-    @property
-    def default_scope(self) -> str | None:
-        return self.scopes_supported[0] if self.scopes_supported else None
+    audiences_supported: list[str]
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,7 @@ def fetch_metadata(client: Client) -> Metadata:
         registration_endpoint=unset_to_none(meta.registration_endpoint),
         revocation_endpoint=unset_to_none(meta.revocation_endpoint),
         scopes_supported=list(unset_to_none(meta.scopes_supported) or []),
+        audiences_supported=_string_list(meta.additional_properties.get("audiences_supported")),
     )
 
 
@@ -177,9 +183,10 @@ def exchange_code(
     )
 
 
-def revoke(client: Client, *, token: str, client_id: str) -> bool:
+def revoke(client: Client, *, token: str, client_id: str, audience: str) -> bool:
     """Best-effort server-side revocation; ``False`` if the server declined."""
-    response = oauth2_revoke.sync_detailed(client=client, body=Oauth2RevokeBody(token=token, client_id=client_id))
+    body = Oauth2RevokeBody(token=token, client_id=client_id, audience=audience)
+    response = oauth2_revoke.sync_detailed(client=client, body=body)
     return response.status_code < 400
 
 
@@ -198,10 +205,18 @@ def login(
     registered for -- is still available.
     """
     meta = fetch_metadata(client)
-    scope = scope or meta.default_scope
-    if scope and meta.scopes_supported and scope not in meta.scopes_supported:
+    if API_AUDIENCE not in meta.audiences_supported:
         raise AuthError(
-            f"scope '{scope}' is not offered by {client._base_url}",
+            f"{client._base_url} does not advertise the '{API_AUDIENCE}' OAuth audience",
+            hint="upgrade the server, or log in with a personal access token: jsonhub auth login --with-token",
+        )
+
+    scope = scope or DEFAULT_CLI_SCOPE
+    requested_scopes = scope.split()
+    unsupported_scopes = [value for value in requested_scopes if value not in meta.scopes_supported]
+    if unsupported_scopes:
+        raise AuthError(
+            f"scope '{unsupported_scopes[0]}' is not offered by {client._base_url}",
             hint=f"supported scopes: {', '.join(meta.scopes_supported)}",
         )
 
@@ -225,6 +240,7 @@ def login(
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
+            "resource": API_AUDIENCE,
         }
         if scope:
             params["scope"] = scope
@@ -245,6 +261,12 @@ def login(
         client_id=client_id,
         code_verifier=verifier,
     )
+    granted_scopes = set(tokens.scope.split()) if tokens.scope else set(requested_scopes)
+    if granted_scopes != set(requested_scopes):
+        raise AuthError(
+            "the token endpoint did not grant the requested OAuth scopes",
+            hint=f"requested: {', '.join(requested_scopes)}; granted: {', '.join(sorted(granted_scopes)) or 'none'}",
+        )
     return tokens, client_id, redirect_uri
 
 
@@ -344,3 +366,10 @@ def _oauth_error(parsed: Any) -> str | None:
     if error and description:
         return f"{error}: {description}"
     return error or description or None
+
+
+def _string_list(value: Any) -> list[str]:
+    """Return only strings from an OAuth metadata array."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]

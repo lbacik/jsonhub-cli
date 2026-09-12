@@ -12,7 +12,8 @@ Layout of ``~/.config/jsonhub/config.json``::
           "refresh_token": null,
           "expires_at": 1770000000,
           "client_id": "...",
-          "scope": "mcp"
+          "audience": "jsonhub-api",
+          "scope": "jsonhub:entities:read jsonhub:entities:write jsonhub:definitions:write"
         }
       }
     }
@@ -107,6 +108,7 @@ class HostConfig:
     refresh_token: str | None = None
     expires_at: int | None = None
     client_id: str | None = None
+    audience: str | None = None
     scope: str | None = None
 
     @property
@@ -131,7 +133,9 @@ class HostConfig:
         ``client_id`` stays, being a public identifier for this CLI rather than
         a credential, and the flow reuses it across logins.
         """
-        return replace(self, token=None, token_type=None, refresh_token=None, expires_at=None, scope=None)
+        return replace(
+            self, token=None, token_type=None, refresh_token=None, expires_at=None, audience=None, scope=None
+        )
 
     @classmethod
     def from_dict(cls, host: str, raw: dict[str, Any]) -> HostConfig:

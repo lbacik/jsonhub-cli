@@ -116,12 +116,13 @@ def test_anonymous_drops_credentials_but_keeps_the_endpoint() -> None:
         refresh_token="refresh",
         expires_at=1770000000,
         client_id="cli",
+        audience="jsonhub-api",
         scope="mcp",
     )
 
     anon = entry.anonymous()
 
-    assert (anon.token, anon.token_type, anon.refresh_token, anon.expires_at, anon.scope) == (None,) * 5
+    assert (anon.token, anon.token_type, anon.refresh_token, anon.expires_at, anon.audience, anon.scope) == (None,) * 6
     assert anon.base_url == entry.base_url
     # client_id is a public identifier, not a credential: the flow reuses it.
     assert anon.client_id == "cli"
