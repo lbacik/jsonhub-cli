@@ -114,6 +114,7 @@ def test_browser_login_stores_the_access_token(
     assert stored["token"] == "oauth-access-token"
     assert stored["token_type"] == "oauth"
     assert stored["client_id"] == "cli-client-1"
+    assert stored["audience"] == "jsonhub-api"
     assert stored["insecure"] is True
     assert transport_settings and all(settings["verify_ssl"] is False for settings in transport_settings)
 
@@ -172,13 +173,16 @@ def test_browser_login_is_verified_by_an_audience_aware_api(
 ) -> None:
     httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
     httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
-    httpx_mock.add_response(
-        url=f"{BASE_URL}/oauth2/token",
-        json={"access_token": "audience-bound-token", "token_type": "Bearer", "expires_in": 900},
-    )
 
-    def verify_audience(_request: httpx.Request) -> httpx.Response:
-        status = 200 if fake_browser and fake_browser[0].get("resource") == "jsonhub-api" else 401
+    def issue_audience_bound_token(_request: httpx.Request) -> httpx.Response:
+        audience = fake_browser[0].get("resource") if fake_browser else None
+        token = "api-audience-token" if audience == "jsonhub-api" else "wrong-audience-token"
+        return httpx.Response(200, json={"access_token": token, "token_type": "Bearer", "expires_in": 900})
+
+    httpx_mock.add_callback(issue_audience_bound_token, url=f"{BASE_URL}/oauth2/token")
+
+    def verify_audience(request: httpx.Request) -> httpx.Response:
+        status = 200 if request.headers.get("Authorization") == "Bearer api-audience-token" else 401
         return httpx.Response(status, json=quota() if status == 200 else {"detail": "Invalid token audience"})
 
     httpx_mock.add_callback(verify_audience, url=f"{BASE_URL}/api/users/me")
@@ -187,7 +191,24 @@ def test_browser_login_is_verified_by_an_audience_aware_api(
 
     assert result.exit_code == 0, result.stderr
     stored = json.loads((isolated_env / "config.json").read_text())["hosts"][HOST]
-    assert stored["token"] == "audience-bound-token"
+    assert stored["token"] == "api-audience-token"
+
+
+def test_browser_login_rejects_a_token_missing_requested_scopes(
+    httpx_mock: HTTPXMock, invoke: Any, fake_browser: list[dict[str, str]], isolated_env: Path
+) -> None:
+    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
+    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/register", status_code=201, json={"client_id": "cli-client-1"})
+    httpx_mock.add_response(
+        url=f"{BASE_URL}/oauth2/token",
+        json={"access_token": "downscoped-token", "token_type": "Bearer", "scope": "jsonhub:entities:read"},
+    )
+
+    result = invoke("--host", HOST, "auth", "login", "--base-url", BASE_URL)
+
+    assert result.exit_code == 4
+    assert "requested OAuth scopes" in result.stderr
+    assert not (isolated_env / "config.json").exists()
 
 
 def test_browser_login_replaces_a_client_registered_for_the_old_mcp_scope(
@@ -413,6 +434,7 @@ def test_logout_revokes_an_oauth_token_for_the_api_audience(
                         "token": "oauth-access-token",
                         "token_type": "oauth",
                         "client_id": "cli-client-1",
+                        "audience": "jsonhub-api",
                         "scope": "jsonhub:entities:read jsonhub:entities:write jsonhub:definitions:write",
                     }
                 },
@@ -428,6 +450,37 @@ def test_logout_revokes_an_oauth_token_for_the_api_audience(
     revocation = next(request for request in httpx_mock.get_requests() if request.url.path == "/oauth2/revoke")
     body = {key: values[0] for key, values in parse_qs(revocation.content.decode()).items()}
     assert body["audience"] == "jsonhub-api"
+
+
+def test_logout_keeps_the_legacy_mcp_revocation_audience(
+    httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
+) -> None:
+    isolated_env.mkdir(parents=True, exist_ok=True)
+    (isolated_env / "config.json").write_text(
+        json.dumps(
+            {
+                "default_host": HOST,
+                "hosts": {
+                    HOST: {
+                        "base_url": BASE_URL,
+                        "token": "legacy-mcp-token",
+                        "token_type": "oauth",
+                        "client_id": "legacy-client",
+                        "scope": "mcp",
+                    }
+                },
+            }
+        )
+    )
+    httpx_mock.add_response(url=f"{BASE_URL}/.well-known/oauth-authorization-server", json=METADATA)
+    httpx_mock.add_response(url=f"{BASE_URL}/oauth2/revoke", json={})
+
+    result = invoke("--host", HOST, "auth", "logout", "--yes")
+
+    assert result.exit_code == 0, result.stderr
+    revocation = next(request for request in httpx_mock.get_requests() if request.url.path == "/oauth2/revoke")
+    body = {key: values[0] for key, values in parse_qs(revocation.content.decode()).items()}
+    assert body["audience"] == "mcp"
 
 
 def test_logout_on_a_clean_machine_is_not_an_error(invoke: Any) -> None:

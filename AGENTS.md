@@ -81,8 +81,9 @@ Worked around here; remove the workaround if the SDK is fixed upstream
 
 3. **`/api/users/me` reports quota, not identity.** There is no "who am I"
    endpoint, so `auth login`/`auth status` can only report whether the server
-   accepts the token. `auth._verify` calls it through the raw httpx client so a
-   quota payload that does not match the schema cannot break a login check.
+   accepts the token. `auth._verification_failure` calls it through the raw
+   httpx client so a quota payload that does not match the schema cannot break a
+   login check.
 
 ## Agent skills
 

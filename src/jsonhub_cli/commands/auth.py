@@ -133,7 +133,8 @@ def _login_with_browser(
         token_type="oauth",
         expires_at=tokens.expires_at,
         client_id=resolved_client_id,
-        scope=tokens.scope or scope,
+        audience=oauth.API_AUDIENCE,
+        scope=tokens.scope or requested_scope,
     )
 
 
@@ -163,7 +164,8 @@ def logout(ctx: typer.Context, yes: YesFlag = False) -> None:
         except AuthError:
             meta = None
         if meta and meta.revocation_endpoint:
-            if oauth.revoke(anon, token=entry.token, client_id=entry.client_id):
+            audience = entry.audience or oauth.LEGACY_DEFAULT_AUDIENCE
+            if oauth.revoke(anon, token=entry.token, client_id=entry.client_id, audience=audience):
                 output.note("Access token revoked server-side")
             else:
                 # Local credentials still get dropped: the user asked to log out.
@@ -198,7 +200,7 @@ def status(ctx: typer.Context) -> None:
         if entry.is_expired:
             output.out.print("    [red]expired[/red] - run 'jsonhub auth login'")
         elif host == active:
-            if _verify(entry):
+            if _verification_failure(entry) is None:
                 output.out.print("    [green]token accepted by the server[/green]")
             else:
                 output.out.print("    [yellow]token was rejected by the server[/yellow]")
@@ -226,22 +228,13 @@ def _preview(token: str) -> str:
     return f"{token[:TOKEN_PREVIEW_CHARS]}..." if len(token) > TOKEN_PREVIEW_CHARS else "..."
 
 
-def _verify(cfg: HostConfig) -> bool:
-    """Check a host config's token by calling ``/api/users/me``.
+def _verification_failure(cfg: HostConfig) -> AuthError | None:
+    """Explain why ``/api/users/me`` did not accept a credential, if it did not.
 
     The endpoint reports quota, not identity -- JsonHub exposes no "who am I"
-    for the current user -- so this is purely "does the server accept this
-    token", which is the useful thing to tell the user after a login.
-
-    Only the status code matters, so the request goes through the SDK client's
-    httpx client rather than the generated endpoint: a login check must not
-    fail because a deployment's quota payload does not match the schema.
+    endpoint. Only its status matters, so use the raw httpx client: verification
+    must not depend on the deployment's quota payload matching the SDK schema.
     """
-    return _verification_failure(cfg) is None
-
-
-def _verification_failure(cfg: HostConfig) -> AuthError | None:
-    """Explain why ``/api/users/me`` did not accept a new credential."""
     client = build_client(cfg)
     try:
         response = client.get_httpx_client().get(WHOAMI_PATH)

@@ -47,6 +47,7 @@ from .output import note
 
 CLIENT_NAME = "jsonhub CLI"
 API_AUDIENCE = "jsonhub-api"
+LEGACY_DEFAULT_AUDIENCE = "mcp"
 CLI_SCOPES = (
     "jsonhub:entities:read",
     "jsonhub:entities:write",
@@ -182,9 +183,9 @@ def exchange_code(
     )
 
 
-def revoke(client: Client, *, token: str, client_id: str) -> bool:
+def revoke(client: Client, *, token: str, client_id: str, audience: str) -> bool:
     """Best-effort server-side revocation; ``False`` if the server declined."""
-    body = Oauth2RevokeBody(token=token, client_id=client_id, audience=API_AUDIENCE)
+    body = Oauth2RevokeBody(token=token, client_id=client_id, audience=audience)
     response = oauth2_revoke.sync_detailed(client=client, body=body)
     return response.status_code < 400
 
@@ -260,6 +261,12 @@ def login(
         client_id=client_id,
         code_verifier=verifier,
     )
+    granted_scopes = set(tokens.scope.split()) if tokens.scope else set(requested_scopes)
+    if granted_scopes != set(requested_scopes):
+        raise AuthError(
+            "the token endpoint did not grant the requested OAuth scopes",
+            hint=f"requested: {', '.join(requested_scopes)}; granted: {', '.join(sorted(granted_scopes)) or 'none'}",
+        )
     return tokens, client_id, redirect_uri
 
 
