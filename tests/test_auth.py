@@ -26,7 +26,7 @@ from pytest_httpx import HTTPXMock
 from jsonhub_cli import oauth
 from jsonhub_cli.config import Config
 
-from .conftest import BASE_URL, HOST, TOKEN, quota
+from .conftest import BASE_URL, HOST, TOKEN, USER_EMAIL, quota
 
 # The happy-path fixture registers every endpoint a full login touches; tests
 # that stop early legitimately leave some unused.
@@ -292,6 +292,14 @@ def test_pat_login_reads_stdin_and_verifies_it(httpx_mock: HTTPXMock, invoke: An
     assert (stored["token"], stored["token_type"]) == ("pat-secret", "pat")
 
 
+def test_login_reports_which_account_it_logged_in_as(httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path) -> None:
+    httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
+
+    result = invoke("--host", HOST, "auth", "login", "--with-token", "--base-url", BASE_URL, stdin="pat-secret\n")
+
+    assert f"Logged in to {HOST} as {USER_EMAIL}" in result.stderr
+
+
 def test_pat_login_keeps_nothing_from_an_earlier_oauth_login(
     httpx_mock: HTTPXMock, invoke: Any, isolated_env: Path
 ) -> None:
@@ -387,8 +395,21 @@ def test_status_exits_nonzero_when_nothing_is_stored(invoke: Any) -> None:
     assert "not logged in" in result.stdout
 
 
-def test_status_confirms_a_working_token(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
+def test_status_names_the_account_the_token_belongs_to(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
     httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json=quota())
+
+    result = invoke("auth", "status")
+
+    assert result.exit_code == 0
+    assert f"logged in as {USER_EMAIL}" in result.stdout
+
+
+def test_status_still_confirms_a_token_a_server_reports_no_identity_for(
+    httpx_mock: HTTPXMock, invoke: Any, logged_in: Path
+) -> None:
+    # Acceptance is the status code, not the body: an older deployment that
+    # answers with quota alone is still a working credential.
+    httpx_mock.add_response(url=f"{BASE_URL}/api/users/me", json={"limits": {}})
 
     result = invoke("auth", "status")
 

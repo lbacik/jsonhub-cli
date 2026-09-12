@@ -35,6 +35,30 @@ def test_list_survives_an_empty_collection(httpx_mock: HTTPXMock, invoke: Any) -
     assert "No definitions found" in result.stderr
 
 
+def test_list_asks_for_root_definitions_only(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    invoke("definition", "list", "--root")
+
+    assert httpx_mock.get_requests()[0].url.params["root"] == "true"
+
+
+def test_list_asks_for_nested_definitions_only(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    invoke("definition", "list", "--nested")
+
+    assert httpx_mock.get_requests()[0].url.params["root"] == "false"
+
+
+def test_list_leaves_root_out_when_it_was_not_asked_for(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    invoke("definition", "list")
+
+    assert "root" not in httpx_mock.get_requests()[0].url.params
+
+
 def test_get_schema_only_prints_just_the_schema(httpx_mock: HTTPXMock, invoke: Any) -> None:
     httpx_mock.add_response(json=definition(schema=SCHEMA))
 

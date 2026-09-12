@@ -1,4 +1,4 @@
-"""``jsonhub me`` - quota usage for the authenticated account."""
+"""``jsonhub me`` - who the credentials belong to, and their quota usage."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ LIMIT_LABELS = {
 
 
 def me(ctx: typer.Context, as_json: JsonFlag = False) -> None:
-    """Show your quota usage and limits."""
+    """Show your account and your quota usage."""
     sess = session(ctx)
     account = payload(api_usersme_get.sync_detailed(client=sess.require_auth()), resource="account")
 
@@ -27,11 +27,13 @@ def me(ctx: typer.Context, as_json: JsonFlag = False) -> None:
         output.print_json(account)
         return
 
+    output.print_fields([("id", account.get("id")), ("email", account.get("email"))])
+
     limits = account.get("limits")
     if not isinstance(limits, dict):
-        output.print_json(account)
         return
 
+    output.err.print()
     output.print_table(
         ["RESOURCE", "USED", "LIMIT", "REMAINING"],
         ([LIMIT_LABELS.get(key, key), used, limit, _remaining(used, limit)] for key, used, limit in _rows(limits)),

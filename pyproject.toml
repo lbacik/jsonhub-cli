@@ -1,6 +1,6 @@
 [project]
 name = "jsonhub-cli"
-version = "0.1.2"
+version = "0.2.0"
 description = "jsonhub - the command line interface for JsonHub"
 readme = "README.md"
 authors = [
@@ -17,7 +17,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "jsonhub-sdk>=0.9.1,<0.10.0",
+    "jsonhub-sdk>=1.0.0,<2.0.0",
     "typer>=0.15.0",
     "rich>=13.9.0",
 ]

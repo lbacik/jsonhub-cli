@@ -117,6 +117,17 @@ def run(argv: Sequence[str] | None = None) -> int:
     except sdk_errors.UnexpectedStatus as exc:
         output.fail(f"the API returned an unexpected status {exc.status_code}")
         return 1
+    except KeyError as exc:
+        # The generated models read every required field with d.pop(), so a body
+        # that omits one -- typically a deployment older than the SDK this
+        # release is built against -- surfaces as a bare KeyError from inside
+        # sync_detailed rather than as an HTTP error. Report it, don't traceback.
+        field = exc.args[0] if exc.args else "a required field"
+        output.fail(
+            f"the API returned a response with no '{field}'",
+            hint="the deployment may be older than this jsonhub release; check --host",
+        )
+        return 1
     except httpx.HTTPError as exc:
         if _is_certificate_verification_error(exc):
             host = exc.request.url.netloc.decode("ascii")

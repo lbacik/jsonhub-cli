@@ -9,7 +9,7 @@ from typing import Any
 
 from pytest_httpx import HTTPXMock
 
-from .conftest import hal_collection, quota
+from .conftest import USER_EMAIL, USER_ID, hal_collection, quota
 
 TOKEN_ID = "7f000000-0000-0000-0000-00000000000a"
 
@@ -62,9 +62,13 @@ def test_list_survives_an_account_with_no_tokens(httpx_mock: HTTPXMock, invoke: 
     assert "No personal access tokens" in result.stderr
 
 
+def created_token(secret: str = "jh_the_real_secret") -> dict[str, Any]:
+    """The one-time creation response, which also carries the secret."""
+    return stored_token() | {"token": secret}
+
+
 def test_create_prints_the_secret_exactly_once(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
-    created = stored_token() | {"token": "jh_the_real_secret"}
-    httpx_mock.add_response(json=created, status_code=201)
+    httpx_mock.add_response(json=created_token(), status_code=201)
 
     result = invoke("token", "create", "ci-deploy")
 
@@ -74,7 +78,7 @@ def test_create_prints_the_secret_exactly_once(httpx_mock: HTTPXMock, invoke: An
 
 
 def test_create_warns_if_the_server_withholds_the_secret(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
-    httpx_mock.add_response(json=stored_token(), status_code=201)
+    httpx_mock.add_response(json=created_token(secret=""), status_code=201)
 
     result = invoke("token", "create", "ci-deploy")
 
@@ -82,7 +86,7 @@ def test_create_warns_if_the_server_withholds_the_secret(httpx_mock: HTTPXMock, 
 
 
 def test_create_accepts_a_day_count_as_the_expiry(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
-    httpx_mock.add_response(json=stored_token(), status_code=201)
+    httpx_mock.add_response(json=created_token(), status_code=201)
 
     invoke("token", "create", "ci", "--expires", "90d")
 
@@ -92,7 +96,7 @@ def test_create_accepts_a_day_count_as_the_expiry(httpx_mock: HTTPXMock, invoke:
 
 
 def test_create_accepts_an_iso_date_as_the_expiry(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
-    httpx_mock.add_response(json=stored_token(), status_code=201)
+    httpx_mock.add_response(json=created_token(), status_code=201)
 
     invoke("token", "create", "ci", "--expires", "2027-01-31")
 
@@ -143,6 +147,15 @@ def test_me_shows_usage_against_limits(httpx_mock: HTTPXMock, invoke: Any, logge
     assert result.exit_code == 0
     assert "entities" in result.stdout
     assert "93" in result.stdout  # 100 - 7 remaining
+
+
+def test_me_names_the_account(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
+    httpx_mock.add_response(json=quota())
+
+    result = invoke("me")
+
+    assert USER_EMAIL in result.stdout
+    assert USER_ID in result.stdout
 
 
 def test_me_json_is_the_api_body(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:

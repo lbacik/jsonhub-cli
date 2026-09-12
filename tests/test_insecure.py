@@ -200,7 +200,7 @@ def test_login_stores_the_flag_and_status_uses_it_afterwards(
     result = invoke("auth", "status")
 
     assert result.exit_code == 0, result.stderr
-    assert "token accepted" in result.stdout
+    assert "logged in as" in result.stdout
     assert transport_settings and all(settings["verify_ssl"] is False for settings in transport_settings)
 
 

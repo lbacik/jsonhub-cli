@@ -176,7 +176,7 @@ wheels = [
 
 [[package]]
 name = "jsonhub-cli"
-version = "0.1.1"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonhub-sdk" },
@@ -194,7 +194,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonhub-sdk", specifier = ">=0.9.1,<0.10.0" },
+    { name = "jsonhub-sdk", specifier = ">=1.0.0,<2.0.0" },
     { name = "rich", specifier = ">=13.9.0" },
     { name = "typer", specifier = ">=0.15.0" },
 ]
@@ -209,7 +209,7 @@ dev = [
 
 [[package]]
 name = "jsonhub-sdk"
-version = "0.9.1"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -217,7 +217,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/a1/c94e97177a9230b4e76284df5221a51e6196e98a8cda2d4fdee9aa75fa99/jsonhub_sdk-0.9.1-py3-none-any.whl", hash = "sha256:49f1a7c65f2f11569302ae0d0b6017592d23c08a0cbfd8f9354324495e595eb9", size = 132262, upload-time = "2026-09-07T12:42:15.621Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/02/243fdbe4b073af7310177c30b4a2cc6076673aaef6cf078e5a480f6822ed/jsonhub_sdk-1.0.0-py3-none-any.whl", hash = "sha256:f116b5892d0a6e76b02a6e407b71db431b5323e67b313ccaedbb7a3e10267ccd", size = 130377, upload-time = "2026-09-12T15:50:53.117Z" },
 ]
 
 [[package]]
