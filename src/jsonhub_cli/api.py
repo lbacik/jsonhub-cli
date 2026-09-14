@@ -126,6 +126,14 @@ class Session:
             )
         return self.client
 
+    def close(self) -> None:
+        """Close the lazily-created HTTP client without constructing a new one."""
+        if self._client is None:
+            return
+        http_client = getattr(self._client, "_client", None)
+        if http_client is not None:
+            http_client.close()
+
 
 def _problem_from_body(response: Response[Any]) -> tuple[str | None, str | None]:
     """Pull ``title``/``detail`` out of an error body the SDK could not parse.

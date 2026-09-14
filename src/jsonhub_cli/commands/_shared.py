@@ -76,6 +76,11 @@ class CliState:
             self._session = Session(self.config, self.host, insecure=self.insecure)
         return self._session
 
+    def close(self) -> None:
+        """Close a command's live HTTP client, if it created one."""
+        if self._session is not None:
+            self._session.close()
+
 
 def state(ctx: typer.Context) -> CliState:
     """Fetch the :class:`CliState` the root callback stored on the context."""
