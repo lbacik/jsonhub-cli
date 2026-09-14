@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 
 import pytest
 from pytest_httpx import HTTPXMock
 
 from jsonhub_cli.commands._shared import CliState
+from jsonhub_cli.errors import ApiError
 from jsonhub_cli.interactive import (
     InteractiveError,
     InteractiveSession,
@@ -17,8 +19,9 @@ from jsonhub_cli.interactive import (
     parse,
     validate,
 )
+from jsonhub_cli.main import run
 
-from .conftest import Result, entity, hal_collection
+from .conftest import Result, definition, entity, hal_collection
 
 
 class Tty:
@@ -230,3 +233,75 @@ def test_use_closes_the_old_client_before_switching_hosts() -> None:
     shell(["use", "other.example"])
 
     assert old_client.is_closed
+
+
+def test_list_entities_and_definitions_dispatch_to_the_existing_commands() -> None:
+    calls: list[list[str]] = []
+
+    def dispatch(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    shell = ShellDispatcher(dispatch, CliState())
+
+    assert shell(["list", "entities", "--page", "2"]) == 0
+    assert shell(["list", "definitions", "--root"]) == 0
+
+    assert calls == [["entity", "list", "--page", "2"], ["definition", "list", "--root"]]
+
+
+def test_combined_list_orders_resources_and_shares_its_limit(
+    httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = CliState()
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    httpx_mock.add_response(json=hal_collection(entity(slug="first"), entity(slug="second")))
+    httpx_mock.add_response(json=hal_collection(definition(slug="schema-one"), definition(slug="schema-two")))
+
+    assert shell(["list", "--limit", "3"]) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        "entity\t018baea0-f999-73f4-9eb4-d0c62f3ac49b\tfirst\t",
+        "entity\t018baea0-f999-73f4-9eb4-d0c62f3ac49b\tsecond\t",
+        "definition\td0000000-0000-0000-0000-000000000001\tschema-one\t",
+    ]
+    assert httpx_mock.get_requests()[0].url.params["limit"] == "3"
+    assert httpx_mock.get_requests()[1].url.params["limit"] == "1"
+
+
+def test_combined_list_json_preserves_the_api_resource_objects(
+    httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parent_id = "10000000-0000-0000-0000-000000000004"
+    state = CliState(current_entity_id=parent_id)
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    listed_entity = entity(data={"camelCase": True})
+    listed_definition = definition(schema={"jsonSchemaKey": True})
+    httpx_mock.add_response(json=hal_collection(listed_entity))
+    httpx_mock.add_response(json=hal_collection(listed_definition))
+
+    assert shell(["list", "--json"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {"entities": [listed_entity], "definitions": [listed_definition]}
+    entity_request, definition_request = httpx_mock.get_requests()
+    assert entity_request.url.params["parent"] == parent_id
+    assert definition_request.url.params["parentEntity"] == parent_id
+
+
+def test_combined_list_rejects_mixed_pages() -> None:
+    with pytest.raises(InteractiveError, match="--page"):
+        ShellDispatcher(lambda _: 0, CliState())(["list", "--page", "1"])
+
+
+def test_combined_list_fails_without_printing_a_partial_result(
+    httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = CliState()
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    httpx_mock.add_response(json=hal_collection(entity(slug="first")))
+    httpx_mock.add_response(status_code=500, json={"detail": "Nope"})
+
+    with pytest.raises(ApiError):
+        shell(["list"])
+
+    assert capsys.readouterr().out == ""

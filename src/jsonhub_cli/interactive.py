@@ -19,6 +19,7 @@ from prompt_toolkit.output.defaults import create_output
 
 from . import output, refs
 from .commands._shared import CliState
+from .commands.resource import list_current_resources
 from .errors import JsonHubCliError, NotFoundError
 
 Dispatch = Callable[[list[str]], int]
@@ -50,7 +51,18 @@ class ShellDispatcher:
             return self._pwd(argv)
         if argv[0] == "use":
             return self._use(argv)
+        if argv[0] == "list":
+            return self._list(argv)
         return self.dispatch(argv)
+
+    def _list(self, argv: list[str]) -> int:
+        if len(argv) > 1 and argv[1] in {"entities", "definitions"}:
+            noun = "entity" if argv[1] == "entities" else "definition"
+            return self.dispatch([noun, "list", *argv[2:]])
+
+        limit, as_json = _combined_list_options(argv[1:])
+        list_current_resources(self.state, limit=limit, as_json=as_json)
+        return 0
 
     def _cd(self, argv: list[str]) -> int:
         if len(argv) != 2:
@@ -242,6 +254,33 @@ def _is_tty(stream: Any) -> bool:
     """Treat streams without ``isatty`` as non-interactive."""
     isatty = getattr(stream, "isatty", None)
     return bool(isatty and isatty())
+
+
+def _combined_list_options(argv: list[str]) -> tuple[int, bool]:
+    """Parse the intentionally small option surface of the mixed list."""
+    limit = 30
+    as_json = False
+    index = 0
+    while index < len(argv):
+        option = argv[index]
+        if option == "--json":
+            as_json = True
+        elif option in {"--limit", "-L"}:
+            if index + 1 == len(argv):
+                raise InteractiveError(f"{option} requires a positive integer")
+            index += 1
+            try:
+                limit = int(argv[index])
+            except ValueError as exc:
+                raise InteractiveError("--limit requires a positive integer") from exc
+            if limit < 1:
+                raise InteractiveError("--limit requires a positive integer")
+        elif option == "--page" or option.startswith("--page="):
+            raise InteractiveError("list does not accept --page; use list entities or list definitions")
+        else:
+            raise InteractiveError(f"unknown list option: {option}")
+        index += 1
+    return limit, as_json
 
 
 def _is_token_login(argv: list[str]) -> bool:

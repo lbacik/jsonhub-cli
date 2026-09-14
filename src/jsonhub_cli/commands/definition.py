@@ -32,6 +32,7 @@ from ._shared import (
     YesFlag,
     confirm,
     session,
+    state,
 )
 
 app = typer.Typer(no_args_is_help=True, help="Work with definitions - the JSON Schemas entities are validated against.")
@@ -68,7 +69,13 @@ def list_definitions(
 ) -> None:
     """List definitions."""
     sess = session(ctx)
-    parent_id = refs.resolve_entity(sess, parent_entity) if parent_entity else None
+    if parent_entity and root is True:
+        raise typer.BadParameter("--root cannot be combined with --parent-entity", param_hint="--root")
+    parent_id = (
+        refs.resolve_entity(sess, parent_entity)
+        if parent_entity
+        else (None if root is not None else state(ctx).current_entity_id)
+    )
 
     def fetch(page_number: int, page_size: int) -> dict[str, Any]:
         return collection.fetch(
@@ -152,6 +159,10 @@ def create_definition(
     field: FieldOption = None,
     slug: SlugOption = None,
     parent_entity: ParentEntityOption = None,
+    root: Annotated[
+        bool,
+        typer.Option("--root", help="Create at the top level, outside the current location."),
+    ] = False,
     as_json: JsonFlag = False,
 ) -> None:
     """Create a definition from a JSON Schema document.
@@ -161,12 +172,15 @@ def create_definition(
     """
     sess = session(ctx)
     schema = jsonarg.require_json(data, field, what="JSON Schema")
+    if parent_entity and root:
+        raise typer.BadParameter("--root cannot be combined with --parent-entity", param_hint="--root")
 
     body = DefinitionDefinitionWrite(json_schema=DefinitionDefinitionWriteJsonSchema.from_dict(schema))
     if slug:
         body.slug = slug
-    if parent_entity:
-        body.parent_entity = refs.entity_iri(sess, parent_entity)
+    parent_ref = parent_entity or (None if root else state(ctx).current_entity_id)
+    if parent_ref:
+        body.parent_entity = refs.entity_iri(sess, parent_ref)
 
     created = payload(api_definitions_post.sync_detailed(client=sess.require_auth(), body=body), resource=RESOURCE)
     _report_saved(created, "Created", as_json=as_json)

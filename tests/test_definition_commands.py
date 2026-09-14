@@ -8,6 +8,9 @@ from typing import Any
 
 from pytest_httpx import HTTPXMock
 
+from jsonhub_cli.commands._shared import CliState
+from jsonhub_cli.main import run
+
 from .conftest import definition, hal_collection
 
 DEFINITION_ID = "d0000000-0000-0000-0000-000000000001"
@@ -59,6 +62,49 @@ def test_list_leaves_root_out_when_it_was_not_asked_for(httpx_mock: HTTPXMock, i
     assert "root" not in httpx_mock.get_requests()[0].url.params
 
 
+def test_list_uses_the_interactive_location_as_its_default_parent_entity(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    assert run(["definition", "list"], state=CliState(current_entity_id=ENTITY_ID)) == 0
+
+    assert httpx_mock.get_requests()[0].url.params["parentEntity"] == ENTITY_ID
+
+
+def test_list_root_bypasses_the_interactive_location(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    assert run(["definition", "list", "--root"], state=CliState(current_entity_id=ENTITY_ID)) == 0
+
+    params = httpx_mock.get_requests()[0].url.params
+    assert params["root"] == "true"
+    assert "parentEntity" not in params
+
+
+def test_list_nested_bypasses_the_interactive_location(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    assert run(["definition", "list", "--nested"], state=CliState(current_entity_id=ENTITY_ID)) == 0
+
+    params = httpx_mock.get_requests()[0].url.params
+    assert params["root"] == "false"
+    assert "parentEntity" not in params
+
+
+def test_list_explicit_parent_entity_wins_over_the_interactive_location(httpx_mock: HTTPXMock) -> None:
+    explicit_parent = "10000000-0000-0000-0000-000000000004"
+    httpx_mock.add_response(json=hal_collection(definition()))
+
+    assert (
+        run(
+            ["definition", "list", "--parent-entity", explicit_parent],
+            state=CliState(current_entity_id=ENTITY_ID),
+        )
+        == 0
+    )
+
+    assert httpx_mock.get_requests()[0].url.params["parentEntity"] == explicit_parent
+
+
 def test_get_schema_only_prints_just_the_schema(httpx_mock: HTTPXMock, invoke: Any) -> None:
     httpx_mock.add_response(json=definition(schema=SCHEMA))
 
@@ -104,6 +150,41 @@ def test_create_resolves_a_parent_entity_slug(httpx_mock: HTTPXMock, invoke: Any
 
     body = json.loads(httpx_mock.get_requests()[-1].content)
     assert body["parentEntity"] == f"/api/entities/{ENTITY_ID}"
+
+
+def test_create_uses_the_interactive_location_as_its_default_parent_entity(
+    httpx_mock: HTTPXMock, logged_in: Path
+) -> None:
+    httpx_mock.add_response(json=definition(), status_code=201)
+
+    assert run(["definition", "create", "-d", "{}"], state=CliState(current_entity_id=ENTITY_ID)) == 0
+
+    assert json.loads(httpx_mock.get_requests()[0].content)["parentEntity"] == f"/api/entities/{ENTITY_ID}"
+
+
+def test_create_root_bypasses_the_interactive_location(httpx_mock: HTTPXMock, logged_in: Path) -> None:
+    httpx_mock.add_response(json=definition(), status_code=201)
+
+    assert run(["definition", "create", "-d", "{}", "--root"], state=CliState(current_entity_id=ENTITY_ID)) == 0
+
+    assert "parentEntity" not in json.loads(httpx_mock.get_requests()[0].content)
+
+
+def test_create_explicit_parent_entity_wins_over_the_interactive_location(
+    httpx_mock: HTTPXMock, logged_in: Path
+) -> None:
+    explicit_parent = "10000000-0000-0000-0000-000000000004"
+    httpx_mock.add_response(json=definition(), status_code=201)
+
+    assert (
+        run(
+            ["definition", "create", "-d", "{}", "--parent-entity", explicit_parent],
+            state=CliState(current_entity_id=ENTITY_ID),
+        )
+        == 0
+    )
+
+    assert json.loads(httpx_mock.get_requests()[0].content)["parentEntity"] == f"/api/entities/{explicit_parent}"
 
 
 def test_edit_sends_a_merge_patch_of_the_schema(httpx_mock: HTTPXMock, invoke: Any, logged_in: Path) -> None:
