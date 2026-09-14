@@ -6,9 +6,12 @@ import json
 from collections.abc import Callable, Iterator
 
 import pytest
+from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.document import Document
 from pytest_httpx import HTTPXMock
 
 from jsonhub_cli.commands._shared import CliState
+from jsonhub_cli.completion import ShellCompleter
 from jsonhub_cli.errors import ApiError
 from jsonhub_cli.interactive import (
     InteractiveError,
@@ -64,6 +67,53 @@ def test_history_is_memory_only_and_omits_token_login() -> None:
 
     assert history.entries == ["entity list"]
     assert list(history.load_history_strings()) == ["entity list"]
+
+
+def test_completion_covers_commands_options_references_and_configured_hosts() -> None:
+    state = CliState()
+    state.config.hosts["internal.example"] = state.config.host_config()
+    completer = ShellCompleter(
+        state,
+        fetch=lambda kind, _parent: ["child"] if kind == "entity" else ["person-v1"],
+    )
+
+    def suggestions(text: str) -> list[str]:
+        document = Document(text, cursor_position=len(text))
+        return [item.text for item in completer.get_completions(document, CompleteEvent())]
+
+    assert "entity" in suggestions("ent")
+    assert "entities" in suggestions("list ent")
+    assert "--host" in suggestions("--ho")
+    assert "--limit" in suggestions("entity list --li")
+    assert "internal.example" in suggestions("--host int")
+    suggestions("entity get ch")
+    completer.wait_for_pending()
+    assert "child" in suggestions("entity get ch")
+    suggestions("entity create --definition per")
+    completer.wait_for_pending()
+    assert "person-v1" in suggestions("entity create --definition per")
+    assert "person-v1" in suggestions("entity create -D per")
+    assert "internal.example" in suggestions("use int")
+
+
+def test_completion_loads_candidates_in_the_background_and_invalidates_them() -> None:
+    state = CliState()
+    calls: list[tuple[str, str | None]] = []
+
+    def fetch(kind: str, parent: str | None) -> list[str]:
+        calls.append((kind, parent))
+        return ["child"]
+
+    completer = ShellCompleter(state, fetch=fetch)
+    document = Document("cd c", cursor_position=4)
+
+    assert list(completer.get_completions(document, CompleteEvent())) == []
+    completer.wait_for_pending()
+    assert [item.text for item in completer.get_completions(document, CompleteEvent())] == ["child"]
+    completer.invalidate()
+    assert list(completer.get_completions(document, CompleteEvent())) == []
+    completer.wait_for_pending()
+    assert calls == [("entity", None), ("entity", None)]
 
 
 def test_session_keeps_running_after_input_and_command_interrupts(capsys: pytest.CaptureFixture[str]) -> None:
