@@ -14,10 +14,11 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from jsonhub_sdk.api.definition import api_definitions_get_collection
-from jsonhub_sdk.api.entity import api_entities_get_collection
+from jsonhub_sdk.api.entity import api_entities_get_collection, api_entities_id_get
+from jsonhub_sdk.types import UNSET
 
 from . import collection, hal
-from .api import Session
+from .api import Session, payload
 from .errors import JsonHubCliError, NotFoundError
 
 ENTITY_PATH = "/api/entities"
@@ -73,6 +74,32 @@ def resource_id(resource: dict[str, Any]) -> str | None:
 def resolve_entity(session: Session, ref: str) -> str:
     """Resolve a user-supplied entity reference to a UUID."""
     return _resolve(session, ref, kind="entity")
+
+
+def resolve_child_entity(session: Session, parent_id: str | None, slug: str) -> str:
+    """Resolve an exact entity slug among one parent's direct children."""
+    body = collection.fetch(
+        lambda: api_entities_get_collection.sync_detailed(
+            client=session.client,
+            qid=slug,
+            limit=SLUG_LOOKUP_LIMIT,
+            parent=parent_id if parent_id else UNSET,
+            root=True if parent_id is None else UNSET,
+        ),
+        resource="entity collection",
+    )
+    candidates = [item for item in hal.items(body) if item.get("slug") == slug]
+    ids = [rid for rid in (resource_id(item) for item in candidates) if rid]
+    if not ids:
+        raise NotFoundError(f"no child entity with slug '{slug}'")
+    if len(set(ids)) > 1:
+        raise AmbiguousRefError(f"child slug '{slug}' matches {len(set(ids))} entities")
+    return ids[0]
+
+
+def fetch_entity(session: Session, entity_id: str) -> dict[str, Any]:
+    """Fetch an entity by its id for interactive path operations."""
+    return payload(api_entities_id_get.sync_detailed(entity_id, client=session.client), resource="entity")
 
 
 def resolve_definition(session: Session, ref: str) -> str:

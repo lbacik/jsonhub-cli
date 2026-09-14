@@ -69,6 +69,7 @@ class CliState:
     insecure: bool | None = None
     config: Config = field(default_factory=Config.load)
     _session: Session | None = None
+    current_entity_id: str | None = None
 
     @property
     def session(self) -> Session:
@@ -80,6 +81,13 @@ class CliState:
         """Close a command's live HTTP client, if it created one."""
         if self._session is not None:
             self._session.close()
+
+    def use_host(self, host: str) -> None:
+        """Switch an interactive session to ``host`` and discard its location."""
+        self.close()
+        self.host = host
+        self._session = None
+        self.current_entity_id = None
 
 
 def state(ctx: typer.Context) -> CliState:
