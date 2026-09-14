@@ -32,6 +32,7 @@ from ._shared import (
     YesFlag,
     confirm,
     session,
+    state,
 )
 
 app = typer.Typer(no_args_is_help=True, help="Work with entities - the JSON documents stored in JsonHub.")
@@ -74,7 +75,10 @@ def list_entities(
     """List entities."""
     sess = session(ctx)
     definition_id = refs.resolve_definition(sess, definition) if definition else None
-    parent_id = refs.resolve_entity(sess, parent) if parent else None
+    if parent and root is True:
+        raise typer.BadParameter("--root cannot be combined with --parent", param_hint="--root")
+    current_parent = state(ctx).current_entity_id
+    parent_id = refs.resolve_entity(sess, parent) if parent else (None if root is True else current_parent)
 
     def fetch(page_number: int, page_size: int) -> dict[str, Any]:
         return collection.fetch(
@@ -163,6 +167,10 @@ def create_entity(
     field: FieldOption = None,
     definition: DefinitionOption = None,
     parent: ParentOption = None,
+    root: Annotated[
+        bool,
+        typer.Option("--root", help="Create at the top level, outside the current location."),
+    ] = False,
     slug: SlugOption = None,
     private: Annotated[bool, typer.Option("--private", help="Hide the entity from everyone but you.")] = False,
     as_json: JsonFlag = False,
@@ -174,6 +182,8 @@ def create_entity(
     """
     sess = session(ctx)
     document = jsonarg.require_json(data, field, what="entity data")
+    if parent and root:
+        raise typer.BadParameter("--root cannot be combined with --parent", param_hint="--root")
 
     # definition is required by the generated model -- it serialises as an
     # explicit null, which is how the API reads "no definition to validate
@@ -185,8 +195,9 @@ def create_entity(
     )
     if slug:
         body.slug = slug
-    if parent:
-        body.parent = refs.entity_iri(sess, parent)
+    parent_ref = parent or (None if root else state(ctx).current_entity_id)
+    if parent_ref:
+        body.parent = refs.entity_iri(sess, parent_ref)
 
     created = payload(api_entities_post.sync_detailed(client=sess.require_auth(), body=body), resource=RESOURCE)
     _report_saved(created, "Created", as_json=as_json)

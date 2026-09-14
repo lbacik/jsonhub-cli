@@ -17,8 +17,9 @@ from prompt_toolkit.history import History
 from prompt_toolkit.input.defaults import create_input
 from prompt_toolkit.output.defaults import create_output
 
-from . import output
-from .errors import JsonHubCliError
+from . import output, refs
+from .commands._shared import CliState
+from .errors import JsonHubCliError, NotFoundError
 
 Dispatch = Callable[[list[str]], int]
 
@@ -27,6 +28,98 @@ class InteractiveError(JsonHubCliError):
     """The interactive shell cannot safely start or accept a command."""
 
     exit_code = 2
+
+
+class StaleLocationError(JsonHubCliError):
+    """The entity remembered by a shell session is no longer navigable."""
+
+    exit_code = 3
+
+
+class ShellDispatcher:
+    """Dispatch shell built-ins and normal CLI commands in one durable context."""
+
+    def __init__(self, dispatch: Dispatch, state: CliState) -> None:
+        self.dispatch = dispatch
+        self.state = state
+
+    def __call__(self, argv: list[str]) -> int:
+        if argv[0] == "cd":
+            return self._cd(argv)
+        if argv[0] == "pwd":
+            return self._pwd(argv)
+        if argv[0] == "use":
+            return self._use(argv)
+        return self.dispatch(argv)
+
+    def _cd(self, argv: list[str]) -> int:
+        if len(argv) != 2:
+            raise InteractiveError("usage: cd PATH")
+        path = argv[1]
+        if path == "/":
+            self.state.current_entity_id = None
+            return 0
+        target = self._resolve_path(path)
+        self.state.current_entity_id = target
+        return 0
+
+    def _pwd(self, argv: list[str]) -> int:
+        if len(argv) != 1:
+            raise InteractiveError("usage: pwd")
+        if self.state.current_entity_id is None:
+            print("/")
+            return 0
+        try:
+            segments = self._path_segments(self.state.current_entity_id)
+        except JsonHubCliError as exc:
+            raise StaleLocationError("current location is stale; run 'cd /' to return to root") from exc
+        print("/" + "/".join(segments))
+        return 0
+
+    def _use(self, argv: list[str]) -> int:
+        if len(argv) != 2 or not argv[1].strip():
+            raise InteractiveError("usage: use HOST")
+        self.state.use_host(argv[1])
+        return 0
+
+    def _resolve_path(self, path: str) -> str | None:
+        if not path or path.endswith("/") or "//" in path:
+            raise InteractiveError("entity paths cannot contain empty segments")
+        path_id = refs.id_from_iri(path)
+        if refs.is_uuid(path) or "://" in path or (path_id is not None and refs.is_uuid(path_id)):
+            raise InteractiveError("navigation paths contain child slugs, not ids or URLs")
+        absolute = path.startswith("/")
+        segments = path[1:].split("/") if absolute else path.split("/")
+        current = None if absolute else self.state.current_entity_id
+        for segment in segments:
+            if not segment:
+                raise InteractiveError("entity paths cannot contain empty segments")
+            if segment == ".":
+                continue
+            if segment == "..":
+                if current is not None:
+                    current = refs.relation_id(refs.fetch_entity(self.state.session, current), "parent")
+                continue
+            if refs.is_uuid(segment) or ":" in segment:
+                raise InteractiveError("navigation paths contain child slugs, not ids or URLs")
+            current = refs.resolve_child_entity(self.state.session, current, segment)
+        return current
+
+    def _path_segments(self, entity_id: str) -> list[str]:
+        segments: list[str] = []
+        seen: set[str] = set()
+        current: str | None = entity_id
+        while current is not None:
+            if current in seen:
+                raise StaleLocationError("current location has cyclic ancestry")
+            seen.add(current)
+            entity = refs.fetch_entity(self.state.session, current)
+            slug = entity.get("slug")
+            if not isinstance(slug, str) or not slug:
+                raise NotFoundError("current location has no slug")
+            segments.append(slug)
+            current = refs.relation_id(entity, "parent")
+        return list(reversed(segments))
 
 
 class SecretSafeHistory(History):
@@ -132,11 +225,17 @@ class InteractiveSession:
                 self.dispatch(argv)
             except KeyboardInterrupt:
                 output.note("Command cancelled.")
+            except JsonHubCliError as exc:
+                # Ordinary CLI commands pass through main.run(), which already
+                # renders these errors. Shell built-ins have no Typer command
+                # boundary, so render their expected failures here and keep the
+                # session usable for the next line.
+                output.fail(exc.message, hint=exc.hint)
 
 
-def start(dispatch: Dispatch) -> None:
+def start(dispatch: Dispatch, state: CliState | None = None) -> None:
     """Start the default prompt-toolkit session."""
-    InteractiveSession(dispatch).run()
+    InteractiveSession(ShellDispatcher(dispatch, state) if state is not None else dispatch).run()
 
 
 def _is_tty(stream: Any) -> bool:

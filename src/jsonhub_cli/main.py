@@ -89,20 +89,30 @@ def root(
     if interactive:
         from .interactive import start
 
-        start(run)
+        cli = CliState(host=host, insecure=True if insecure else None)
+        start(lambda argv: run(argv, state=cli), cli)
+        cli.close()
         return
 
-    cli = CliState(host=host, insecure=True if insecure else None)
-    effective = cli.config.host_config(host, insecure=cli.insecure)
+    inherited = ctx.obj if isinstance(ctx.obj, CliState) else None
+    # A command-level host is deliberately isolated from the interactive
+    # session: it gets neither its client nor its current entity location.
+    cli = (
+        CliState(host=host, insecure=True if insecure else None, config=inherited.config)
+        if host is not None and inherited is not None
+        else inherited or CliState(host=host, insecure=True if insecure else None)
+    )
+    effective = cli.config.host_config(cli.host, insecure=cli.insecure)
     if effective.insecure:
-        output.warn(f"TLS certificate verification is disabled for {cli.config.resolve_host(host)}")
+        output.warn(f"TLS certificate verification is disabled for {cli.config.resolve_host(cli.host)}")
     ctx.obj = cli
-    ctx.call_on_close(cli.close)
+    if cli is not inherited:
+        ctx.call_on_close(cli.close)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
 
-def run(argv: Sequence[str] | None = None) -> int:
+def run(argv: Sequence[str] | None = None, *, state: CliState | None = None) -> int:
     """Run the CLI and return its exit code, reporting expected failures.
 
     Typer runs in its own standalone mode so that usage errors, ``--help`` and
@@ -117,7 +127,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     same handling the installed script gets.
     """
     try:
-        app(args=list(argv) if argv is not None else None, prog_name="jsonhub")
+        app(args=list(argv) if argv is not None else None, prog_name="jsonhub", obj=state)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 0
     except ValidationError as exc:

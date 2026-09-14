@@ -5,10 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 
 import pytest
+from pytest_httpx import HTTPXMock
 
-from jsonhub_cli.interactive import InteractiveError, InteractiveSession, SecretSafeHistory, parse, validate
+from jsonhub_cli.commands._shared import CliState
+from jsonhub_cli.interactive import (
+    InteractiveError,
+    InteractiveSession,
+    SecretSafeHistory,
+    ShellDispatcher,
+    StaleLocationError,
+    parse,
+    validate,
+)
 
-from .conftest import Result
+from .conftest import Result, entity, hal_collection
 
 
 class Tty:
@@ -115,3 +125,108 @@ def test_root_interactive_guard_uses_the_standard_error_boundary(invoke: Callabl
     assert isinstance(result, Result)
     assert result.exit_code == 2
     assert "requires both stdin and stdout" in result.stderr
+
+
+def test_cd_traverses_direct_children_and_pwd_renders_the_full_path(
+    httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = CliState()
+    shell = ShellDispatcher(lambda _: 0, state)
+    root_id = "10000000-0000-0000-0000-000000000001"
+    child_id = "10000000-0000-0000-0000-000000000002"
+    httpx_mock.add_response(json=hal_collection(entity(root_id, "root")))
+    httpx_mock.add_response(json=hal_collection(entity(child_id, "child")))
+
+    assert shell(["cd", "/root/child"]) == 0
+    assert state.current_entity_id == child_id
+
+    child = entity(child_id, "child")
+    child["_links"]["parent"] = {"href": f"/api/entities/{root_id}"}
+    httpx_mock.add_response(json=child)
+    httpx_mock.add_response(json=entity(root_id, "root"))
+    assert shell(["pwd"]) == 0
+
+    assert capsys.readouterr().out == "/root/child\n"
+
+
+def test_failed_cd_keeps_the_previous_location(httpx_mock: HTTPXMock) -> None:
+    state = CliState(current_entity_id="10000000-0000-0000-0000-000000000003")
+    shell = ShellDispatcher(lambda _: 0, state)
+    httpx_mock.add_response(json=hal_collection())
+
+    with pytest.raises(Exception, match="no child entity"):
+        shell(["cd", "missing"])
+
+    assert state.current_entity_id == "10000000-0000-0000-0000-000000000003"
+
+
+def test_cd_supports_relative_parent_and_root_paths(httpx_mock: HTTPXMock) -> None:
+    root_id = "10000000-0000-0000-0000-000000000001"
+    child_id = "10000000-0000-0000-0000-000000000002"
+    grandchild_id = "10000000-0000-0000-0000-000000000003"
+    state = CliState(current_entity_id=root_id)
+    shell = ShellDispatcher(lambda _: 0, state)
+    httpx_mock.add_response(json=hal_collection(entity(child_id, "child")))
+    httpx_mock.add_response(json=hal_collection(entity(grandchild_id, "grandchild")))
+
+    assert shell(["cd", "child/grandchild"]) == 0
+    assert state.current_entity_id == grandchild_id
+
+    grandchild = entity(grandchild_id, "grandchild")
+    grandchild["_links"]["parent"] = {"href": f"/api/entities/{child_id}"}
+    httpx_mock.add_response(json=grandchild)
+    assert shell(["cd", ".."]) == 0
+    assert state.current_entity_id == child_id
+    assert shell(["cd", "/"]) == 0
+    assert shell(["cd", "."]) == 0
+    assert state.current_entity_id is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        "child/",
+        "child//grandchild",
+        "10000000-0000-0000-0000-000000000001",
+        "/api/entities/10000000-0000-0000-0000-000000000001",
+        "https://app.example/entities/10000000-0000-0000-0000-000000000001",
+    ],
+)
+def test_cd_rejects_invalid_path_forms_without_requesting_the_api(path: str, httpx_mock: HTTPXMock) -> None:
+    shell = ShellDispatcher(lambda _: 0, CliState())
+
+    with pytest.raises(InteractiveError):
+        shell(["cd", path])
+
+    assert httpx_mock.get_requests() == []
+
+
+def test_pwd_reports_a_stale_location_with_root_recovery_guidance(httpx_mock: HTTPXMock) -> None:
+    state = CliState(current_entity_id="10000000-0000-0000-0000-000000000001")
+    shell = ShellDispatcher(lambda _: 0, state)
+    httpx_mock.add_response(status_code=404, json={"detail": "Not Found"})
+
+    with pytest.raises(StaleLocationError, match="run 'cd /'"):
+        shell(["pwd"])
+
+    assert state.current_entity_id == "10000000-0000-0000-0000-000000000001"
+
+
+def test_use_resets_the_location_without_persisting_a_host() -> None:
+    state = CliState(host="first.example", current_entity_id="entity-id")
+    shell = ShellDispatcher(lambda _: 0, state)
+
+    assert shell(["use", "other.example"]) == 0
+
+    assert (state.host, state.current_entity_id) == ("other.example", None)
+
+
+def test_use_closes_the_old_client_before_switching_hosts() -> None:
+    state = CliState(host="first.example", current_entity_id="entity-id")
+    old_client = state.session.client.get_httpx_client()
+    shell = ShellDispatcher(lambda _: 0, state)
+
+    shell(["use", "other.example"])
+
+    assert old_client.is_closed
