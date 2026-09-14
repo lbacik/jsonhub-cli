@@ -28,7 +28,8 @@ app = typer.Typer(
     name="jsonhub",
     help="Work with JsonHub from the command line.",
     epilog=EPILOG,
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
     add_completion=True,
     rich_markup_mode="markdown",
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -75,17 +76,30 @@ def root(
         bool,
         typer.Option("--insecure", help="Disable TLS certificate verification for this command."),
     ] = False,
+    interactive: Annotated[
+        bool,
+        typer.Option("--interactive", help="Run commands in a TTY-only interactive session."),
+    ] = False,
     _version: Annotated[
         bool,
         typer.Option("--version", "-v", callback=_version_callback, is_eager=True, help="Print the version and exit."),
     ] = False,
 ) -> None:
     """Set up state every subcommand shares."""
+    if interactive:
+        from .interactive import start
+
+        start(run)
+        return
+
     cli = CliState(host=host, insecure=True if insecure else None)
     effective = cli.config.host_config(host, insecure=cli.insecure)
     if effective.insecure:
         output.warn(f"TLS certificate verification is disabled for {cli.config.resolve_host(host)}")
     ctx.obj = cli
+    ctx.call_on_close(cli.close)
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
 
 
 def run(argv: Sequence[str] | None = None) -> int:
