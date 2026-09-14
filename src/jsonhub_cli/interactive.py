@@ -20,6 +20,7 @@ from prompt_toolkit.output.defaults import create_output
 from . import output, refs
 from .commands._shared import CliState
 from .commands.resource import list_current_resources
+from .completion import ShellCompleter
 from .errors import JsonHubCliError, NotFoundError
 
 Dispatch = Callable[[list[str]], int]
@@ -40,9 +41,12 @@ class StaleLocationError(JsonHubCliError):
 class ShellDispatcher:
     """Dispatch shell built-ins and normal CLI commands in one durable context."""
 
-    def __init__(self, dispatch: Dispatch, state: CliState) -> None:
+    def __init__(
+        self, dispatch: Dispatch, state: CliState, *, on_context_change: Callable[[], None] | None = None
+    ) -> None:
         self.dispatch = dispatch
         self.state = state
+        self.on_context_change = on_context_change
 
     def __call__(self, argv: list[str]) -> int:
         if argv[0] == "cd":
@@ -92,6 +96,8 @@ class ShellDispatcher:
         if len(argv) != 2 or not argv[1].strip():
             raise InteractiveError("usage: use HOST")
         self.state.use_host(argv[1])
+        if self.on_context_change is not None:
+            self.on_context_change()
         return 0
 
     def _resolve_path(self, path: str) -> str | None:
@@ -198,6 +204,7 @@ class InteractiveSession:
         prompt_factory: Callable[..., Any] = PromptSession,
         input_factory: Callable[..., Any] = create_input,
         output_factory: Callable[..., Any] = create_output,
+        completer: ShellCompleter | None = None,
     ) -> None:
         self.dispatch = dispatch
         self.stdin = sys.stdin if stdin is None else stdin
@@ -206,6 +213,7 @@ class InteractiveSession:
         self.input_factory = input_factory
         self.output_factory = output_factory
         self.history = SecretSafeHistory()
+        self.completer = completer
 
     def run(self) -> None:
         """Prompt until EOF, leaving command failures isolated to their line."""
@@ -216,6 +224,7 @@ class InteractiveSession:
             history=self.history,
             input=self.input_factory(self.stdin),
             output=self.output_factory(sys.stderr, always_prefer_tty=False),
+            completer=self.completer,
         )
         while True:
             try:
@@ -247,7 +256,23 @@ class InteractiveSession:
 
 def start(dispatch: Dispatch, state: CliState | None = None) -> None:
     """Start the default prompt-toolkit session."""
-    InteractiveSession(ShellDispatcher(dispatch, state) if state is not None else dispatch).run()
+    if state is None:
+        InteractiveSession(dispatch).run()
+        return
+    completer = ShellCompleter(state)
+
+    def command(argv: list[str]) -> int:
+        try:
+            return dispatch(argv)
+        finally:
+            if _changes_completion(argv):
+                completer.invalidate()
+
+    shell = ShellDispatcher(command, state, on_context_change=completer.invalidate)
+    try:
+        InteractiveSession(shell, completer=completer).run()
+    finally:
+        completer.close()
 
 
 def _is_tty(stream: Any) -> bool:
@@ -287,3 +312,12 @@ def _is_token_login(argv: list[str]) -> bool:
     """Recognise token login even when root options precede the command."""
     is_login = any(argv[index : index + 2] == ["auth", "login"] for index in range(len(argv) - 1))
     return "--with-token" in argv and is_login
+
+
+def _changes_completion(argv: list[str]) -> bool:
+    """Whether a command may change resource, credentials, or host candidates."""
+    nouns = {"entity", "definition"}
+    return len(argv) >= 2 and (
+        (argv[0] in nouns and argv[1] in {"create", "edit", "delete"})
+        or argv[:2] in (["auth", "login"], ["auth", "logout"])
+    )

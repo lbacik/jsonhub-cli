@@ -67,6 +67,39 @@ jsonhub token list
 Entities and definitions can be addressed however you have them — a UUID, a
 slug, an IRI (`/api/entities/<uuid>`), or a URL pasted from the web app.
 
+### Interactive shell
+
+Run `jsonhub --interactive` from a terminal to keep a host and current entity
+location for one session. The shell accepts the usual commands plus `cd`,
+`pwd`, `use HOST`, and `list` (or `list entities` / `list definitions`):
+
+```console
+$ jsonhub --interactive
+jsonhub> cd projects/website
+jsonhub> list --limit 10
+jsonhub> entity create --definition page-v1 --field title='"Home"'
+jsonhub> use jsonhub.internal
+jsonhub> pwd
+/
+```
+
+Tab completion suggests commands, options, configured hosts, and relevant
+entity or definition references. API suggestions are best-effort: they use a
+short background request and a 30-second in-memory cache, so an unavailable
+deployment never pauses typing. The cache is refreshed after resource changes,
+authentication changes, and `use`.
+
+Input uses POSIX-style quoting. `Ctrl-C` cancels the current input or command;
+`Ctrl-D` exits. The shell is not an OS shell: pipelines, redirection, command
+substitution, and job control are not supported. Commands needing exclusive
+stdin (`--data -` and `auth login --with-token`) must be run outside it. History
+is session-only and omits token-login commands.
+
+For a release smoke test in a real TTY: start the shell, run `help`, navigate a
+nested path and a failed `cd`, switch hosts, run a contextual `list`, confirm a
+destructive command and decline it, open and close an editor-backed edit, then
+verify `Ctrl-C`, `Ctrl-D`, quoted input, and completion after a resource change.
+
 ### JSON payloads
 
 `--data` takes inline JSON, `@file.json`, or `-` for stdin. `--field key=value`
