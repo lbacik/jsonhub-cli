@@ -25,6 +25,19 @@ from .errors import JsonHubCliError, NotFoundError
 
 Dispatch = Callable[[list[str]], int]
 
+#: The prompt label, and the display label, for the top level (no current entity).
+_ROOT_LABEL = "root"
+
+#: Usage lines for the shell's own built-ins, shown by bare ``help`` and by
+#: ``help <command>`` instead of running the command.
+_SHELL_COMMAND_USAGE: dict[str, str] = {
+    "cd": "cd PATH    Change the current entity (cd / for root, cd .. for the parent).",
+    "pwd": "pwd        Print the current entity's full path.",
+    "use": "use HOST   Switch to another configured host and return to root.",
+    "list": "list       List entities and definitions here (--limit N, --json).",
+    "help": "help [CMD] Show this message, or a shell command's usage.",
+}
+
 
 class InteractiveError(JsonHubCliError):
     """The interactive shell cannot safely start or accept a command."""
@@ -47,6 +60,9 @@ class ShellDispatcher:
         self.dispatch = dispatch
         self.state = state
         self.on_context_change = on_context_change
+        #: The current entity's display label ("root" at the top level), kept
+        #: in step with ``state.current_entity_id`` for the shell's prompt.
+        self._label = _ROOT_LABEL
 
     def __call__(self, argv: list[str]) -> int:
         if argv[0] == "cd":
@@ -57,7 +73,13 @@ class ShellDispatcher:
             return self._use(argv)
         if argv[0] == "list":
             return self._list(argv)
+        if argv[0] == "help":
+            return self._help(argv)
         return self.dispatch(argv)
+
+    def prompt_message(self) -> str:
+        """The shell prompt for the current location."""
+        return f"{self._label}> "
 
     def _list(self, argv: list[str]) -> int:
         if len(argv) > 1 and argv[1] in {"entities", "definitions"}:
@@ -68,15 +90,37 @@ class ShellDispatcher:
         list_current_resources(self.state, limit=limit, as_json=as_json)
         return 0
 
+    def _help(self, argv: list[str]) -> int:
+        """List the shell's own commands, or print one command's usage.
+
+        ``help`` alone augments the normal command tree instead of replacing
+        it; ``help <shell command>`` prints that command's usage rather than
+        running it, since a blind ``COMMAND --help`` rewrite would otherwise
+        run ``cd``, ``use`` and the rest with ``--help`` as their argument.
+        """
+        if len(argv) == 1:
+            print("Shell commands:")
+            for usage in _SHELL_COMMAND_USAGE.values():
+                print(f"  {usage}")
+            print()
+            return self.dispatch(["--help"])
+        target = argv[1]
+        if len(argv) == 2 and target in _SHELL_COMMAND_USAGE:
+            print(_SHELL_COMMAND_USAGE[target])
+            return 0
+        return self.dispatch([*argv[1:], "--help"])
+
     def _cd(self, argv: list[str]) -> int:
         if len(argv) != 2:
             raise InteractiveError("usage: cd PATH")
         path = argv[1]
         if path == "/":
             self.state.current_entity_id = None
+            self._label = _ROOT_LABEL
             return 0
-        target = self._resolve_path(path)
+        target, label = self._resolve_path(path)
         self.state.current_entity_id = target
+        self._label = label
         return 0
 
     def _pwd(self, argv: list[str]) -> int:
@@ -96,11 +140,12 @@ class ShellDispatcher:
         if len(argv) != 2 or not argv[1].strip():
             raise InteractiveError("usage: use HOST")
         self.state.use_host(argv[1])
+        self._label = _ROOT_LABEL
         if self.on_context_change is not None:
             self.on_context_change()
         return 0
 
-    def _resolve_path(self, path: str) -> str | None:
+    def _resolve_path(self, path: str) -> tuple[str | None, str]:
         if not path or path.endswith("/") or "//" in path:
             raise InteractiveError("entity paths cannot contain empty segments")
         path_id = refs.id_from_iri(path)
@@ -109,6 +154,7 @@ class ShellDispatcher:
         absolute = path.startswith("/")
         segments = path[1:].split("/") if absolute else path.split("/")
         current = None if absolute else self.state.current_entity_id
+        label = _ROOT_LABEL if absolute else self._label
         for segment in segments:
             if not segment:
                 raise InteractiveError("entity paths cannot contain empty segments")
@@ -116,12 +162,28 @@ class ShellDispatcher:
                 continue
             if segment == "..":
                 if current is not None:
-                    current = refs.relation_id(refs.fetch_entity(self.state.session, current), "parent")
+                    parent_id = refs.relation_id(refs.fetch_entity(self.state.session, current), "parent")
+                    current = parent_id
+                    label = self._label_for(parent_id) if parent_id is not None else _ROOT_LABEL
                 continue
             if refs.is_uuid(segment) or ":" in segment:
                 raise InteractiveError("navigation paths contain child slugs, not ids or URLs")
             current = refs.resolve_child_entity(self.state.session, current, segment)
-        return current
+            label = segment
+        return current, label
+
+    def _label_for(self, entity_id: str) -> str:
+        """The display label for a bare id: its slug, costing one lookup.
+
+        A failed lookup degrades to the id itself rather than failing an
+        otherwise successful ``cd``.
+        """
+        try:
+            entity = refs.fetch_entity(self.state.session, entity_id)
+        except JsonHubCliError:
+            return entity_id
+        slug = entity.get("slug")
+        return slug if isinstance(slug, str) and slug else entity_id
 
     def _path_segments(self, entity_id: str) -> list[str]:
         segments: list[str] = []
@@ -172,8 +234,6 @@ def parse(line: str) -> list[str] | None:
     except ValueError as exc:
         output.fail(f"could not parse command: {exc}")
         return None
-    if argv and argv[0] == "help":
-        return [*argv[1:], "--help"]
     return argv
 
 
@@ -205,6 +265,7 @@ class InteractiveSession:
         input_factory: Callable[..., Any] = create_input,
         output_factory: Callable[..., Any] = create_output,
         completer: ShellCompleter | None = None,
+        prompt_message: Callable[[], str] = lambda: "jsonhub> ",
     ) -> None:
         self.dispatch = dispatch
         self.stdin = sys.stdin if stdin is None else stdin
@@ -214,6 +275,7 @@ class InteractiveSession:
         self.output_factory = output_factory
         self.history = SecretSafeHistory()
         self.completer = completer
+        self.prompt_message = prompt_message
 
     def run(self) -> None:
         """Prompt until EOF, leaving command failures isolated to their line."""
@@ -228,7 +290,7 @@ class InteractiveSession:
         )
         while True:
             try:
-                line = prompt.prompt("jsonhub> ")
+                line = prompt.prompt(self.prompt_message())
             except KeyboardInterrupt:
                 output.note("Input cancelled.")
                 continue
@@ -270,7 +332,7 @@ def start(dispatch: Dispatch, state: CliState | None = None) -> None:
 
     shell = ShellDispatcher(command, state, on_context_change=completer.invalidate)
     try:
-        InteractiveSession(shell, completer=completer).run()
+        InteractiveSession(shell, completer=completer, prompt_message=shell.prompt_message).run()
     finally:
         completer.close()
 

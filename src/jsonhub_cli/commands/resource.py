@@ -25,13 +25,15 @@ def list_current_resources(state: CliState, *, limit: int, as_json: bool) -> Non
         output.print_json({"entities": entities, "definitions": definitions})
         return
     output.print_table(
-        ["TYPE", output.Col("ID", min_width=36), output.Col("SLUG", min_width=8), "PARENT"],
+        [output.Col("ID", min_width=36), output.Col("SLUG", min_width=8), "DEFINITION", "TITLE"],
         (
-            [kind, refs.resource_id(item), item.get("slug"), refs.relation_label(item, parent)]
-            for kind, parent, items in (
-                ("entity", "parent", entities),
-                ("definition", "parentEntity", definitions),
-            )
+            [
+                refs.resource_id(item),
+                item.get("slug"),
+                refs.relation_label(item, "definition") if kind == "entity" else None,
+                refs.schema_title(item) if kind == "definition" else None,
+            ]
+            for kind, items in (("entity", entities), ("definition", definitions))
             for item in items
         ),
         empty="No resources found",

@@ -107,7 +107,7 @@ def list_definitions(
             [
                 refs.resource_id(item),
                 item.get("slug"),
-                _schema_title(item),
+                refs.schema_title(item),
                 refs.relation_label(item, "parentEntity"),
             ]
             for item in result.items
@@ -142,7 +142,7 @@ def get_definition(
         [
             ("id", refs.resource_id(definition)),
             ("slug", definition.get("slug")),
-            ("title", _schema_title(definition)),
+            ("title", refs.schema_title(definition)),
             ("parent entity", refs.relation_label(definition, "parentEntity")),
             ("owned by you", bool(definition.get("isOwnedByCurrentUser"))),
         ]
@@ -241,14 +241,6 @@ def delete_definition(
 def _fetch(sess: Session, ref: str) -> dict[str, Any]:
     definition_id = refs.resolve_definition(sess, ref)
     return payload(api_definitions_id_get.sync_detailed(definition_id, client=sess.client), resource=RESOURCE)
-
-
-def _schema_title(definition: dict[str, Any]) -> str | None:
-    schema = definition.get("jsonSchema")
-    if not isinstance(schema, dict):
-        return None
-    title = schema.get("title") or schema.get("$id")
-    return str(title) if title else None
 
 
 def _report_saved(definition: dict[str, Any], verb: str, *, as_json: bool) -> None:

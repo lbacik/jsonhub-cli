@@ -71,17 +71,23 @@ slug, an IRI (`/api/entities/<uuid>`), or a URL pasted from the web app.
 
 Run `jsonhub --interactive` from a terminal to keep a host and current entity
 location for one session. The shell accepts the usual commands plus `cd`,
-`pwd`, `use HOST`, and `list` (or `list entities` / `list definitions`):
+`pwd`, `use HOST`, and `list` (or `list entities` / `list definitions`). The
+prompt itself shows where you are: `root>` at the top level, or the current
+entity's slug (falling back to its id if it has none) once you `cd` into one:
 
 ```console
 $ jsonhub --interactive
-jsonhub> cd projects/website
-jsonhub> list --limit 10
-jsonhub> entity create --definition page-v1 --field title='"Home"'
-jsonhub> use jsonhub.internal
-jsonhub> pwd
+root> cd projects/website
+website> list --limit 10
+website> entity create --definition page-v1 --field title='"Home"'
+website> use jsonhub.internal
+root> pwd
 /
 ```
+
+`help` lists the shell's own commands (`cd`, `pwd`, `use`, `list`, `help`)
+alongside the normal command tree, and `help <command>` prints that command's
+usage without running it.
 
 Tab completion suggests commands, options, configured hosts, and relevant
 entity or definition references. API suggestions are best-effort: they use a
