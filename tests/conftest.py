@@ -126,9 +126,17 @@ def entity(
     data: dict[str, Any] | None = None,
     definition_slug: str = "base-v1",
     private: bool = False,
+    parent: dict[str, Any] | str | None = None,
 ) -> dict[str, Any]:
+    """A ``jsonhub-cli`` entity body.
+
+    ``parent`` accepts either shape the API can hand back for a relation: an
+    embedded object (with a ``slug``) or a bare IRI string. The real API only
+    ever gives an entity's parent as an IRI; the dict form exists so tests can
+    exercise the same rendering path used for ``parentEntity``.
+    """
     related_definition = {"id": "d0000000-0000-0000-0000-000000000001", "slug": definition_slug}
-    return {
+    result = {
         "_links": {"self": {"href": f"/api/entities/{entity_id}"}},
         "_embedded": {"definition": dict(related_definition)},
         "id": entity_id,
@@ -138,20 +146,33 @@ def entity(
         "private": private,
         "isOwnedByCurrentUser": True,
     }
+    if parent is not None:
+        result["parent"] = parent
+    return result
 
 
 def definition(
     definition_id: str = "d0000000-0000-0000-0000-000000000001",
     slug: str = "base-v1",
     schema: dict[str, Any] | None = None,
+    parent_entity: dict[str, Any] | str | None = None,
 ) -> dict[str, Any]:
-    return {
+    """A ``jsonhub-cli`` definition body.
+
+    ``parent_entity`` accepts either shape the API can hand back for a
+    relation: an embedded object (with a ``slug``) or a bare IRI string. See
+    :func:`entity` for why both are supported here.
+    """
+    result = {
         "_links": {"self": {"href": f"/api/definitions/{definition_id}"}},
         "id": definition_id,
         "slug": slug,
         "jsonSchema": schema if schema is not None else {"type": "object", "properties": {"name": {"type": "string"}}},
         "isOwnedByCurrentUser": True,
     }
+    if parent_entity is not None:
+        result["parentEntity"] = parent_entity
+    return result
 
 
 USER_ID = "0193d9a1-4c2f-7b6e-8f10-2a5c9d3e7b41"

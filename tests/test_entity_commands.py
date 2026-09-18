@@ -27,6 +27,36 @@ def test_list_prints_a_row_per_entity(httpx_mock: HTTPXMock, invoke: Any) -> Non
     assert "second" in result.stdout
 
 
+def test_list_shows_the_parents_uuid_when_only_an_iri_is_given(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    parent_id = "10000000-0000-0000-0000-000000000004"
+    httpx_mock.add_response(json=hal_collection(entity(parent=f"/api/entities/{parent_id}"), total=1))
+
+    result = invoke("entity", "list")
+
+    assert result.exit_code == 0
+    assert parent_id in result.stdout
+
+
+def test_list_shows_the_parents_slug_when_the_api_embeds_it(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    parent = {"id": "10000000-0000-0000-0000-000000000004", "slug": "root"}
+    httpx_mock.add_response(json=hal_collection(entity(parent=parent), total=1))
+
+    result = invoke("entity", "list")
+
+    assert result.exit_code == 0
+    assert "root" in result.stdout
+
+
+def test_list_shows_no_parent_for_a_top_level_entity(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(entity(), total=1))
+
+    result = invoke("entity", "list")
+
+    assert result.exit_code == 0
+    lines = [line for line in result.stdout.splitlines() if line]
+    assert lines[0].split("\t")[-1] == ""
+
+
 def test_list_sends_hal_accept_so_the_envelope_comes_back(httpx_mock: HTTPXMock, invoke: Any) -> None:
     httpx_mock.add_response(json=hal_collection(entity()))
 
@@ -229,9 +259,7 @@ def test_create_posts_the_document_and_bearer_token(httpx_mock: HTTPXMock, invok
     assert json.loads(request.content)["data"] == {"name": "ada", "count": 3}
 
 
-def test_create_uses_the_interactive_location_as_its_default_parent(
-    httpx_mock: HTTPXMock, logged_in: Path
-) -> None:
+def test_create_uses_the_interactive_location_as_its_default_parent(httpx_mock: HTTPXMock, logged_in: Path) -> None:
     httpx_mock.add_response(json=entity(), status_code=201)
 
     assert run(["entity", "create", "-d", "{}"], state=CliState(current_entity_id=ENTITY_ID)) == 0

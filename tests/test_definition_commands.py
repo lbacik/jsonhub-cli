@@ -18,15 +18,39 @@ ENTITY_ID = "018baea0-f999-73f4-9eb4-d0c62f3ac49b"
 SCHEMA = {"title": "Person", "type": "object", "properties": {"name": {"type": "string"}}}
 
 
-def test_list_shows_slug_and_schema_properties(httpx_mock: HTTPXMock, invoke: Any) -> None:
-    httpx_mock.add_response(json=hal_collection(definition(schema=SCHEMA), total=1))
+def test_list_shows_id_slug_title_and_parent(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    parent = {"id": ENTITY_ID, "slug": "root"}
+    httpx_mock.add_response(json=hal_collection(definition(schema=SCHEMA, parent_entity=parent), total=1))
 
     result = invoke("definition", "list")
 
     assert result.exit_code == 0
+    assert DEFINITION_ID in result.stdout
     assert "base-v1" in result.stdout
     assert "Person" in result.stdout
-    assert "name" in result.stdout
+    assert "root" in result.stdout
+    assert "name" not in result.stdout
+
+
+def test_list_shows_the_parent_entitys_uuid_when_only_an_iri_is_given(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(
+        json=hal_collection(definition(parent_entity=f"/api/entities/{ENTITY_ID}"), total=1),
+    )
+
+    result = invoke("definition", "list")
+
+    assert result.exit_code == 0
+    assert ENTITY_ID in result.stdout
+
+
+def test_list_shows_no_parent_for_a_top_level_definition(httpx_mock: HTTPXMock, invoke: Any) -> None:
+    httpx_mock.add_response(json=hal_collection(definition(), total=1))
+
+    result = invoke("definition", "list")
+
+    assert result.exit_code == 0
+    lines = [line for line in result.stdout.splitlines() if line]
+    assert lines[0].split("\t")[-1] == ""
 
 
 def test_list_survives_an_empty_collection(httpx_mock: HTTPXMock, invoke: Any) -> None:

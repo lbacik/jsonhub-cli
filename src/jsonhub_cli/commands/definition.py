@@ -38,7 +38,6 @@ from ._shared import (
 app = typer.Typer(no_args_is_help=True, help="Work with definitions - the JSON Schemas entities are validated against.")
 
 RESOURCE = "definition"
-SCHEMA_PREVIEW_WIDTH = 44
 TITLE_WIDTH = 32
 UUID_WIDTH = 36
 
@@ -102,14 +101,14 @@ def list_definitions(
             output.Col("ID", min_width=UUID_WIDTH),
             output.Col("SLUG", min_width=8),
             output.Col("TITLE", max_width=TITLE_WIDTH),
-            output.Col("SCHEMA", max_width=SCHEMA_PREVIEW_WIDTH),
+            output.Col("PARENT", min_width=UUID_WIDTH),
         ],
         (
             [
                 refs.resource_id(item),
                 item.get("slug"),
                 _schema_title(item),
-                output.summarize_json(_properties(item), SCHEMA_PREVIEW_WIDTH),
+                refs.relation_label(item, "parentEntity"),
             ]
             for item in result.items
         ),
@@ -250,15 +249,6 @@ def _schema_title(definition: dict[str, Any]) -> str | None:
         return None
     title = schema.get("title") or schema.get("$id")
     return str(title) if title else None
-
-
-def _properties(definition: dict[str, Any]) -> list[str] | None:
-    """The schema's top-level property names, as a compact table preview."""
-    schema = definition.get("jsonSchema")
-    if not isinstance(schema, dict):
-        return None
-    properties = schema.get("properties")
-    return sorted(properties) if isinstance(properties, dict) else None
 
 
 def _report_saved(definition: dict[str, Any], verb: str, *, as_json: bool) -> None:
