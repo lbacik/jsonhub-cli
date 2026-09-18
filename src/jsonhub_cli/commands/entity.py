@@ -38,7 +38,6 @@ from ._shared import (
 app = typer.Typer(no_args_is_help=True, help="Work with entities - the JSON documents stored in JsonHub.")
 
 RESOURCE = "entity"
-DATA_PREVIEW_WIDTH = 44
 UUID_WIDTH = 36
 
 DefinitionOption = Annotated[
@@ -107,16 +106,14 @@ def list_entities(
             output.Col("ID", min_width=UUID_WIDTH),
             output.Col("SLUG", min_width=8),
             output.Col("DEFINITION", min_width=10),
-            output.Col("PRIVATE", min_width=7),
-            output.Col("DATA", max_width=DATA_PREVIEW_WIDTH),
+            output.Col("PARENT", min_width=UUID_WIDTH),
         ],
         (
             [
                 refs.resource_id(item),
                 item.get("slug"),
                 refs.relation_label(item, "definition"),
-                bool(item.get("private")),
-                output.summarize_json(item.get("data"), DATA_PREVIEW_WIDTH),
+                refs.relation_label(item, "parent"),
             ]
             for item in result.items
         ),
