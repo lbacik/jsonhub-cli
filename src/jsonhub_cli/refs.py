@@ -204,3 +204,12 @@ def relation_label(resource: dict[str, Any], name: str) -> str | None:
     if isinstance(slug, str) and slug:
         return slug
     return resource_id(related)
+
+
+def schema_title(definition: dict[str, Any]) -> str | None:
+    """Human-facing name for a definition: its schema's title, else its ``$id``."""
+    schema = definition.get("jsonSchema")
+    if not isinstance(schema, dict):
+        return None
+    title = schema.get("title") or schema.get("$id")
+    return str(title) if title else None

@@ -43,9 +43,9 @@ class Prompts:
         return response
 
 
-def test_parse_handles_blank_help_and_unmatched_quotes(capsys: pytest.CaptureFixture[str]) -> None:
+def test_parse_handles_blank_lines_and_unmatched_quotes(capsys: pytest.CaptureFixture[str]) -> None:
     assert parse("   ") is None
-    assert parse("help entity") == ["entity", "--help"]
+    assert parse("help entity") == ["help", "entity"]
     assert parse("entity get 'one two'") == ["entity", "get", "one two"]
     assert parse("entity get '") is None
     assert "could not parse command" in capsys.readouterr().err
@@ -185,6 +185,7 @@ def test_cd_traverses_direct_children_and_pwd_renders_the_full_path(
 ) -> None:
     state = CliState()
     shell = ShellDispatcher(lambda _: 0, state)
+    assert shell.prompt_message() == "root> "
     root_id = "10000000-0000-0000-0000-000000000001"
     child_id = "10000000-0000-0000-0000-000000000002"
     httpx_mock.add_response(json=hal_collection(entity(root_id, "root")))
@@ -192,6 +193,7 @@ def test_cd_traverses_direct_children_and_pwd_renders_the_full_path(
 
     assert shell(["cd", "/root/child"]) == 0
     assert state.current_entity_id == child_id
+    assert shell.prompt_message() == "child> "
 
     child = entity(child_id, "child")
     child["_links"]["parent"] = {"href": f"/api/entities/{root_id}"}
@@ -211,6 +213,7 @@ def test_failed_cd_keeps_the_previous_location(httpx_mock: HTTPXMock) -> None:
         shell(["cd", "missing"])
 
     assert state.current_entity_id == "10000000-0000-0000-0000-000000000003"
+    assert shell.prompt_message() == "root> "
 
 
 def test_cd_supports_relative_parent_and_root_paths(httpx_mock: HTTPXMock) -> None:
@@ -228,11 +231,42 @@ def test_cd_supports_relative_parent_and_root_paths(httpx_mock: HTTPXMock) -> No
     grandchild = entity(grandchild_id, "grandchild")
     grandchild["_links"]["parent"] = {"href": f"/api/entities/{child_id}"}
     httpx_mock.add_response(json=grandchild)
+    httpx_mock.add_response(json=entity(child_id, "child"))
     assert shell(["cd", ".."]) == 0
     assert state.current_entity_id == child_id
+    assert shell.prompt_message() == "child> "
     assert shell(["cd", "/"]) == 0
     assert shell(["cd", "."]) == 0
     assert state.current_entity_id is None
+    assert shell.prompt_message() == "root> "
+
+
+def test_cd_parent_falls_back_to_the_id_when_the_lookup_fails(httpx_mock: HTTPXMock) -> None:
+    child_id = "10000000-0000-0000-0000-000000000002"
+    parent_id = "10000000-0000-0000-0000-000000000001"
+    state = CliState(current_entity_id=child_id)
+    shell = ShellDispatcher(lambda _: 0, state)
+    child = entity(child_id, "child")
+    child["_links"]["parent"] = {"href": f"/api/entities/{parent_id}"}
+    httpx_mock.add_response(json=child)
+    httpx_mock.add_response(status_code=404, json={"detail": "Not Found"})
+
+    assert shell(["cd", ".."]) == 0
+
+    assert state.current_entity_id == parent_id
+    assert shell.prompt_message() == f"{parent_id}> "
+
+
+def test_cd_parent_falls_back_to_root_when_it_has_no_parent(httpx_mock: HTTPXMock) -> None:
+    root_id = "10000000-0000-0000-0000-000000000001"
+    state = CliState(current_entity_id=root_id)
+    shell = ShellDispatcher(lambda _: 0, state)
+    httpx_mock.add_response(json=entity(root_id, "root"))
+
+    assert shell(["cd", ".."]) == 0
+
+    assert state.current_entity_id is None
+    assert shell.prompt_message() == "root> "
 
 
 @pytest.mark.parametrize(
@@ -273,6 +307,7 @@ def test_use_resets_the_location_without_persisting_a_host() -> None:
     assert shell(["use", "other.example"]) == 0
 
     assert (state.host, state.current_entity_id) == ("other.example", None)
+    assert shell.prompt_message() == "root> "
 
 
 def test_use_closes_the_old_client_before_switching_hosts() -> None:
@@ -311,12 +346,27 @@ def test_combined_list_orders_resources_and_shares_its_limit(
     assert shell(["list", "--limit", "3"]) == 0
 
     assert capsys.readouterr().out.splitlines() == [
-        "entity\t018baea0-f999-73f4-9eb4-d0c62f3ac49b\tfirst\t",
-        "entity\t018baea0-f999-73f4-9eb4-d0c62f3ac49b\tsecond\t",
-        "definition\td0000000-0000-0000-0000-000000000001\tschema-one\t",
+        "018baea0-f999-73f4-9eb4-d0c62f3ac49b\tfirst\tbase-v1\t",
+        "018baea0-f999-73f4-9eb4-d0c62f3ac49b\tsecond\tbase-v1\t",
+        "d0000000-0000-0000-0000-000000000001\tschema-one\t\t",
     ]
     assert httpx_mock.get_requests()[0].url.params["limit"] == "3"
     assert httpx_mock.get_requests()[1].url.params["limit"] == "1"
+
+
+def test_combined_list_shows_a_definitions_schema_title(
+    httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = CliState()
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    httpx_mock.add_response(json=hal_collection())
+    httpx_mock.add_response(json=hal_collection(definition(slug="schema-two", schema={"title": "Schema Two"})))
+
+    assert shell(["list", "--limit", "5"]) == 0
+
+    assert capsys.readouterr().out.splitlines() == [
+        "d0000000-0000-0000-0000-000000000001\tschema-two\t\tSchema Two",
+    ]
 
 
 def test_combined_list_json_preserves_the_api_resource_objects(
@@ -355,3 +405,58 @@ def test_combined_list_fails_without_printing_a_partial_result(
         shell(["list"])
 
     assert capsys.readouterr().out == ""
+
+
+def test_bare_help_lists_shell_commands_alongside_the_command_tree(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls: list[list[str]] = []
+
+    def dispatch(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    shell = ShellDispatcher(dispatch, CliState())
+
+    assert shell(["help"]) == 0
+
+    assert calls == [["--help"]]
+    out = capsys.readouterr().out
+    assert "cd PATH" in out
+    assert "use HOST" in out
+
+
+@pytest.mark.parametrize("command", ["cd", "pwd", "use", "list", "help"])
+def test_help_for_a_shell_command_prints_usage_without_running_it(
+    command: str, capsys: pytest.CaptureFixture[str], httpx_mock: HTTPXMock
+) -> None:
+    state = CliState(host="first.example")
+    calls: list[list[str]] = []
+
+    def dispatch(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    shell = ShellDispatcher(dispatch, state)
+
+    assert shell(["help", command]) == 0
+
+    assert calls == []
+    assert httpx_mock.get_requests() == []
+    assert state.host == "first.example"
+    assert state.current_entity_id is None
+    assert command in capsys.readouterr().out
+
+
+def test_help_for_a_normal_command_forwards_to_the_typer_tree() -> None:
+    calls: list[list[str]] = []
+
+    def dispatch(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    shell = ShellDispatcher(dispatch, CliState())
+
+    assert shell(["help", "entity"]) == 0
+
+    assert calls == [["entity", "--help"]]
