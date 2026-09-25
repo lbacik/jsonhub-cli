@@ -335,6 +335,37 @@ def test_list_entities_and_definitions_dispatch_to_the_existing_commands() -> No
     assert calls == [["entity", "list", "--page", "2"], ["definition", "list", "--root"]]
 
 
+def test_combined_list_at_root_requests_only_top_level_resources(httpx_mock: HTTPXMock) -> None:
+    state = CliState()
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    httpx_mock.add_response(json=hal_collection(entity(slug="first")))
+    httpx_mock.add_response(json=hal_collection(definition(slug="schema-one")))
+
+    assert shell(["list"]) == 0
+
+    entity_request, definition_request = httpx_mock.get_requests()
+    assert entity_request.url.params["root"] == "true"
+    assert "parent" not in entity_request.url.params
+    assert definition_request.url.params["root"] == "true"
+    assert "parentEntity" not in definition_request.url.params
+
+
+def test_combined_list_below_root_requests_only_direct_children(httpx_mock: HTTPXMock) -> None:
+    parent_id = "10000000-0000-0000-0000-000000000004"
+    state = CliState(current_entity_id=parent_id)
+    shell = ShellDispatcher(lambda argv: run(argv, state=state), state)
+    httpx_mock.add_response(json=hal_collection(entity(slug="child")))
+    httpx_mock.add_response(json=hal_collection(definition(slug="schema-one")))
+
+    assert shell(["list"]) == 0
+
+    entity_request, definition_request = httpx_mock.get_requests()
+    assert entity_request.url.params["parent"] == parent_id
+    assert "root" not in entity_request.url.params
+    assert definition_request.url.params["parentEntity"] == parent_id
+    assert "root" not in definition_request.url.params
+
+
 def test_combined_list_orders_resources_and_shares_its_limit(
     httpx_mock: HTTPXMock, capsys: pytest.CaptureFixture[str]
 ) -> None:
